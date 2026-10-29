@@ -1,0 +1,66 @@
+# Maintainer: CratusGod
+pkgname=oumu-git
+_pkgname=oumu
+pkgver=0.1.0.r0
+pkgrel=1
+pkgdesc="Local-first writing assistant: grammar, AI rewrites and translation in any app (best on Hyprland)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/CratusGod/oumu"
+license=('AGPL-3.0-or-later')
+depends=('webkit2gtk-4.1' 'gtk3' 'gtk-layer-shell' 'at-spi2-core' 'libayatana-appindicator' 'xdg-utils')
+optdepends=('hyprland: underlines in place, hover cards and paste on every Wayland app'
+            'wl-clipboard: highlighted-text translation and paste-based Accept on Wayland'
+            'wtype: paste-based Accept on other wlroots compositors (Sway, river)'
+            'xdotool: paste-based Accept on X11'
+            'matugen: the Matugen theme outside Ryoku')
+makedepends=('git' 'cargo' 'nodejs' 'pnpm')
+provides=('oumu')
+conflicts=('oumu')
+options=('!lto' '!debug')
+_branch=main
+source=("$_pkgname::git+https://github.com/CratusGod/oumu.git#branch=$_branch")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  local v
+  v=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+  printf '%s.r%s.g%s' "$v" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  pnpm --dir ui install --frozen-lockfile
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --manifest-path src-tauri/Cargo.toml --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  # tauri's `custom-protocol` feature embeds ui/dist instead of loading the Vite dev server.
+  pnpm --dir ui run build
+  cargo build --frozen --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+}
+
+check() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo test --frozen --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol --lib
+  pnpm --dir ui test
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/oumu "$pkgdir/usr/bin/oumu"
+  install -Dm644 packaging/arch/oumu.desktop "$pkgdir/usr/share/applications/oumu.desktop"
+  # Browser bridge: Firefox, Zen and other Gecko browsers start oumu for the
+  # "Translate with Oumu" extension, which is shipped alongside for loading.
+  install -Dm644 packaging/arch/com.cratusgod.oumu.json "$pkgdir/usr/lib/mozilla/native-messaging-hosts/com.cratusgod.oumu.json"
+  install -Dm644 -t "$pkgdir/usr/share/oumu/browser-extension" packaging/browser-extension/manifest.json packaging/browser-extension/background.js
+  install -Dm644 -t "$pkgdir/usr/share/oumu/browser-extension/icons" packaging/browser-extension/icons/*.png
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/oumu.png"
+  install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/oumu.png"
+  install -Dm644 src-tauri/icons/32x32.png "$pkgdir/usr/share/icons/hicolor/32x32/apps/oumu.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

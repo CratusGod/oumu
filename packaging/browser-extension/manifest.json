@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Translate with Oumu",
+  "version": "0.1.0",
+  "description": "Right-click highlighted text and translate it in Oumu, the writing assistant on your desktop.",
+  "icons": { "32": "icons/oumu-32.png", "128": "icons/oumu-128.png" },
+  "permissions": ["contextMenus", "nativeMessaging"],
+  "background": { "scripts": ["background.js"] },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "oumu@cratusgod",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  }
+}

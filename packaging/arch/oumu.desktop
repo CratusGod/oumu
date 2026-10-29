@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Oumu
+GenericName=Writing Assistant
+Comment=Grammar, spelling and AI writing tools in any text field
+Exec=oumu
+Icon=oumu
+Terminal=false
+Categories=Utility;TextTools;
+Keywords=grammar;spelling;writing;proofread;
+StartupNotify=false
+X-GNOME-UsesNotifications=false

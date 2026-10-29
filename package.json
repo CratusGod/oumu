@@ -1,0 +1,11 @@
+{
+  "name": "oumu",
+  "private": true,
+  "description": "Local-first Grammarly-style writing assistant for macOS and Linux",
+  "scripts": {
+    "postinstall": "pnpm --dir ui install",
+    "dev": "cd src-tauri && ../ui/node_modules/.bin/tauri dev",
+    "build": "cd src-tauri && ../ui/node_modules/.bin/tauri build",
+    "test": "pnpm --dir ui test"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "com.cratusgod.oumu",
+  "description": "Oumu: translate text from the browser extension",
+  "path": "/usr/bin/oumu",
+  "type": "stdio",
+  "allowed_extensions": ["oumu@cratusgod"]
+}
