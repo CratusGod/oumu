@@ -249,6 +249,11 @@ impl AXElement {
         Some(Rect { x: p.x, y: p.y, w: s.w, h: s.h })
     }
 
+    /// The text showing inside a box is not asked for here: every alert is placed.
+    pub fn visible_text_range(&self, _vis: &Rect) -> Option<(usize, usize)> {
+        None
+    }
+
     pub fn bounds_for_range(&self, loc: usize, len: usize) -> Option<Rect> {
         let r = CFRange { location: loc as isize, length: len as isize };
         let v = unsafe { AXValueCreate(K_AX_VALUE_CFRANGE, &r as *const CFRange as *const c_void) };

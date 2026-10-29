@@ -44,6 +44,7 @@ zbus = { version = "5", default-features = false, features = ["blocking-api", "a
 gtk = "0.18"
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 webkit2gtk = "2.0"
+libc = "0.2"
 
 [profile.release]
 codegen-units = 1

@@ -49,6 +49,9 @@ const STATE_READ_ONLY: u32 = 43;
 const STATE_SHOWING: u32 = 25;
 
 const GRANULARITY_LINE: u32 = 3;
+/// Characters around the visible text whose underlines are placed too (a
+/// partly shown line, a scroll in progress).
+const VISIBLE_SLACK: usize = 300;
 const COORD_SCREEN: u32 = 0;
 const COORD_WINDOW: u32 = 1;
 
@@ -194,11 +197,15 @@ fn slow_apps() -> &'static Mutex<std::collections::HashMap<String, Instant>> {
     SLOW.get_or_init(Default::default)
 }
 
+/// Accessibility calls made so far (the debug probe reports it, to keep idle cost honest).
+pub static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn call<B, R>(dest: &str, path: &str, iface: &str, method: &str, body: &B) -> Option<R>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType,
     R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
 {
+    CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut slow) = slow_apps().lock() {
         match slow.get(dest) {
             Some(until) if Instant::now() < *until => return None,
@@ -365,6 +372,7 @@ pub(super) mod focus {
                     *g = None;
                 }
             }
+            crate::pace::wake();
         }
         Ok(())
     }
@@ -563,10 +571,11 @@ impl AXElement {
             .clone()
             .filter(|(bus, _)| bus_pid(bus) == Some(front.pid))
             .map(|(bus, path)| AXElement::node(bus, path, front.pid))
-            .filter(|el| el.usable_focus().is_some());
-        if live.as_ref().and_then(|el| el.usable_focus()) == Some(true) {
-            return live;
-        }
+            .and_then(|el| el.usable_focus().map(|editable| (el, editable)));
+        let live = match live {
+            Some((el, true)) => return Some(el),
+            other => other.map(|(el, _)| el),
+        };
         // No event for an editable field of the front app: it took focus before
         // the listener was up, or the event named the page around the field
         // (browsers). Look the focused field up in the app's tree.
@@ -910,6 +919,29 @@ impl AXElement {
             cur = le;
         }
         out
+    }
+
+    /// The UTF-16 range of the text showing inside `vis` (screen coordinates),
+    /// widened by `VISIBLE_SLACK` characters each way; `None` when the toolkit
+    /// does not answer (then every alert is placed). Corners can sit in a
+    /// margin or below the last line, so a few points step inwards.
+    pub fn visible_text_range(&self, vis: &Rect) -> Option<(usize, usize)> {
+        let (ox, oy) = self.origin()?;
+        let coord = self.text_coord();
+        let at = |x: f64, y: f64| -> Option<i32> {
+            let o: i32 = self.call(IFACE_TEXT, "GetOffsetAtPoint", &((x - ox).round() as i32, (y - oy).round() as i32, coord))?;
+            (o >= 0).then_some(o)
+        };
+        let xs = [vis.x + 4.0, vis.x + vis.w / 2.0, vis.x + vis.w - 4.0];
+        let insets = [4.0, 24.0, 48.0, vis.h / 4.0];
+        let first = insets.iter().find_map(|dy| xs.iter().find_map(|&x| at(x, vis.y + dy)))?;
+        let t = self.cached_text();
+        let chars = t.chars().count();
+        // Nothing under the bottom corners: the text ends inside the field.
+        let last = insets.iter().find_map(|dy| xs.iter().rev().find_map(|&x| at(x, vis.y + vis.h - dy))).map_or(chars, |o| o as usize);
+        let s = (first as usize).saturating_sub(VISIBLE_SLACK);
+        let e = (last + VISIBLE_SLACK).min(chars);
+        (e >= s).then(|| (char_to_u16(&t, s), char_to_u16(&t, e)))
     }
 
     pub fn line_for_index(&self, _idx: usize) -> Option<i64> {

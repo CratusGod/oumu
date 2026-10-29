@@ -2,7 +2,7 @@
 //! global coordinates, no pointer position and no "frontmost app": Hyprland does.
 
 use serde::Deserialize;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -10,16 +10,63 @@ use std::time::{Duration, Instant};
 
 const IO_TIMEOUT: Duration = Duration::from_millis(400);
 
-fn socket_path() -> Option<PathBuf> {
+/// One of Hyprland's sockets: `.socket.sock` (requests) or `.socket2.sock` (events).
+fn socket(name: &str) -> Option<PathBuf> {
     let sig = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
-    let p = runtime.join("hypr").join(&sig).join(".socket.sock");
+    let p = runtime.join("hypr").join(&sig).join(name);
     if p.exists() {
         return Some(p);
     }
     // Hyprland before 0.40 kept its sockets in /tmp/hypr.
-    let legacy = PathBuf::from("/tmp/hypr").join(&sig).join(".socket.sock");
+    let legacy = PathBuf::from("/tmp/hypr").join(&sig).join(name);
     legacy.exists().then_some(legacy)
+}
+
+fn socket_path() -> Option<PathBuf> {
+    socket(".socket.sock")
+}
+
+/// Whether an event line (`name>>data`) changes which window is in front or
+/// where it is. Hyprland repeats `activewindowv2` for the same window whenever
+/// its title changes (a terminal spinner, a browser tab): only a new address
+/// counts, tracked in `active`.
+fn moves_the_front(line: &str, active: &mut String) -> bool {
+    let (name, data) = line.split_once(">>").unwrap_or((line, ""));
+    match name {
+        "activewindowv2" => {
+            if data == active {
+                return false;
+            }
+            *active = data.to_string();
+            true
+        }
+        "closewindow" | "fullscreen" | "movewindowv2" | "workspacev2" | "focusedmonv2" => true,
+        _ => false,
+    }
+}
+
+/// Call `on_change` whenever Hyprland switches, closes, moves or fullscreens
+/// the front window. Runs on its own thread; reconnects after a compositor restart.
+pub fn watch_front(on_change: fn()) {
+    let spawned = std::thread::Builder::new().name("hypr-events".into()).spawn(move || loop {
+        if let Some(stream) = socket(".socket2.sock").and_then(|p| UnixStream::connect(p).ok()) {
+            let mut active = String::new();
+            let mut reader = BufReader::new(stream);
+            let mut buf = Vec::new();
+            // Bytes, not `lines()`: a window title that is not UTF-8 must not end the stream.
+            while reader.read_until(b'\n', &mut buf).is_ok_and(|n| n > 0) {
+                if moves_the_front(String::from_utf8_lossy(&buf).trim_end(), &mut active) {
+                    on_change();
+                }
+                buf.clear();
+            }
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    });
+    if let Err(e) = spawned {
+        log::error!("hyprland event thread: {e}");
+    }
 }
 
 /// Whether a live Hyprland session is reachable.
@@ -28,7 +75,11 @@ pub fn available() -> bool {
 }
 
 /// Send one request (`j/activewindow`, `dispatch …`) and return the reply.
+/// Requests sent so far (reported by the debug probe).
+pub static REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn request(cmd: &str) -> Option<String> {
+    REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut s = UnixStream::connect(socket_path()?).ok()?;
     s.set_read_timeout(Some(IO_TIMEOUT)).ok()?;
     s.set_write_timeout(Some(IO_TIMEOUT)).ok()?;
@@ -217,6 +268,19 @@ mod tests {
         assert!(safe_selector("pid:42"));
         assert!(!safe_selector("address:0x1\" }) hl.dsp.exec_cmd(\"rm"));
         assert!(!safe_selector(""));
+    }
+
+    #[test]
+    fn window_switches_wake_the_loop_title_changes_do_not() {
+        let mut active = String::new();
+        assert!(moves_the_front("activewindowv2>>55d0a1b2c3d4", &mut active));
+        assert!(!moves_the_front("activewindowv2>>55d0a1b2c3d4", &mut active), "same window, new title");
+        assert!(moves_the_front("activewindowv2>>66e1", &mut active), "another window");
+        assert!(moves_the_front("closewindow>>55d0a1b2c3d4", &mut active));
+        assert!(moves_the_front("workspacev2>>2,2", &mut active));
+        assert!(!moves_the_front("windowtitlev2>>55d0a1b2c3d4,New tab", &mut active));
+        assert!(!moves_the_front("activewindow>>zen,New tab", &mut active), "the v2 event already covers it");
+        assert!(!moves_the_front("", &mut active));
     }
 
     #[test]

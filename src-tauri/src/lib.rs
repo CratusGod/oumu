@@ -19,6 +19,7 @@ pub mod host;
 pub mod llm;
 pub mod matugen;
 pub mod overlay;
+pub mod pace;
 pub mod score;
 pub mod settings;
 pub mod textmap;

@@ -59,6 +59,7 @@ fn handle(app: &AppHandle, shared: &Shared, path: &str, args: Value) -> Result<V
                 "ui_ready": st.ui_ready,
                 "ui_log": st.ui_log,
                 "panel": panel,
+                "ipc": ipc_counts(),
             }))
         }
         "/accept" => {
@@ -155,4 +156,22 @@ fn handle(app: &AppHandle, shared: &Shared, path: &str, args: Value) -> Result<V
         }
         _ => Err(format!("unknown path {path}")),
     }
+}
+
+/// How many accessibility calls and Hyprland requests Oumu has made since it started.
+#[cfg(target_os = "linux")]
+fn ipc_counts() -> serde_json::Value {
+    use std::sync::atomic::Ordering::Relaxed;
+    json!({
+        "a11y_calls": crate::linux::ax::CALLS.load(Relaxed),
+        "hypr_requests": crate::linux::hyprland::REQUESTS.load(Relaxed),
+        "ticks": crate::host::TICKS.load(Relaxed),
+        "wakes": crate::pace::WAKES.load(Relaxed),
+        "woken_early": crate::pace::WOKEN_EARLY.load(Relaxed),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ipc_counts() -> serde_json::Value {
+    json!({})
 }

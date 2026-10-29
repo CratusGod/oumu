@@ -181,6 +181,7 @@ fn slide(app: &AppHandle, from: f64, to: f64, y: f64, gen: u64) -> bool {
 pub fn set_tucked(app: &AppHandle, side: &str, tucked: bool, animate: bool, focus: bool) {
     let gen = ANIM_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     TUCKED.store(tucked, Ordering::SeqCst);
+    crate::pace::wake();
     let app = app.clone();
     let side = side.to_string();
     std::thread::spawn(move || {

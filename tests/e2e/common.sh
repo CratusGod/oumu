@@ -8,6 +8,11 @@ APP_BIN="${APP_BIN:-$ROOT/src-tauri/target/debug/oumu}"
 # Absolute path, so stop_app can kill exactly the binary it launched and nothing else (e.g. /Applications).
 case "$APP_BIN" in /*) ;; *) APP_BIN="$PWD/$APP_BIN";; esac
 LOG="${LOG:-/tmp/oumu-e2e.log}"
+# The app under test keeps its settings and history in a throwaway folder, so a
+# run never reads the user's AI key (typing would spend their quota on spot
+# checks) and never changes their settings. E2E_DATA_HOME=... reuses a folder.
+if [ -z "${E2E_DATA_HOME:-}" ]; then E2E_DATA_HOME="$(mktemp -d /tmp/oumu-e2e-data.XXXXXX)"; E2E_OWN_DATA=1; fi
+export E2E_DATA_HOME
 PASS=0; FAIL=0
 pass() { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
 fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); }
@@ -25,8 +30,7 @@ ensure_vite() {
 
 # The product offers no local model (your own key only). The LLM
 # gates can run on a local Ollama: E2E_RIG_LLM=1 points the app at it through
-# the probe. Opt-in, because /settings saves to the user's real settings file
-# and would replace their own provider and key.
+# the probe (saved in the run's throwaway settings, see E2E_DATA_HOME).
 rig_model() {
   [ "${E2E_RIG_LLM:-0}" = 1 ] || return 0
   probe /settings "{\"llm\": {\"provider\": \"ollama\", \"base_url\": \"${E2E_OLLAMA_URL:-http://127.0.0.1:11434}\", \"api_key\": \"\", \"model\": \"${E2E_MODEL:-qwen2.5:7b}\"}}" >/dev/null 2>&1 || true
@@ -36,7 +40,7 @@ start_app() {
   if curl -s -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then echo "app already running on :$PORT"; rig_model; return 0; fi
   [ -x "$APP_BIN" ] || { echo "no binary at $APP_BIN (build first)"; exit 1; }
   ensure_vite || exit 1
-  OUMU_DEBUG_PORT="$PORT" RUST_LOG=info "$APP_BIN" >"$LOG" 2>&1 &
+  XDG_DATA_HOME="$E2E_DATA_HOME" OUMU_DEBUG_PORT="$PORT" RUST_LOG=info "$APP_BIN" >"$LOG" 2>&1 &
   APP_PID=$!
   for _ in $(seq 1 40); do
     sleep 0.25
@@ -45,7 +49,11 @@ start_app() {
   echo "app did not start; log:"; tail -20 "$LOG"; exit 1
 }
 
-stop_app() { [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null; pkill -f "${APP_BIN}\$" 2>/dev/null; true; }
+stop_app() {
+  [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null; pkill -f "${APP_BIN}\$" 2>/dev/null
+  [ "${E2E_OWN_DATA:-0}" = 1 ] && sleep 0.5 && rm -rf "$E2E_DATA_HOME"
+  true
+}
 
 # The host gates activate TextEdit, type, and move the pointer; a person using the
 # machine at the same time changes focus and overrides synthetic input. Wait for

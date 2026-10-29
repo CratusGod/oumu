@@ -5001,6 +5001,7 @@ dependencies = [
  "gtk",
  "gtk-layer-shell",
  "harper-core",
+ "libc",
  "log",
  "objc2",
  "objc2-app-kit",

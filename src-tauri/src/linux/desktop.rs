@@ -16,8 +16,8 @@
 use super::ax::Rect;
 use super::hyprland;
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +73,60 @@ pub struct Front {
     pub key: String,
 }
 
+/// How long one answer about the front window is reused. Underline placement
+/// asks once per text box; one host tick (220 ms) should cost one lookup.
+const FRONT_TTL: Duration = Duration::from_millis(80);
+/// How long the monitor layout is reused (the edge tab asks every pointer read).
+const MONITOR_TTL: Duration = Duration::from_secs(2);
+
+/// `value` from `cache` while it is younger than `ttl`, else a fresh `read()`.
+fn cached<T: Clone>(cache: &Mutex<Option<(Instant, T)>>, ttl: Duration, read: impl FnOnce() -> T) -> T {
+    if let Ok(g) = cache.lock() {
+        if let Some((at, v)) = g.as_ref() {
+            if at.elapsed() < ttl {
+                return v.clone();
+            }
+        }
+    }
+    let v = read();
+    if let Ok(mut g) = cache.lock() {
+        *g = Some((Instant::now(), v.clone()));
+    }
+    v
+}
+
+static FRONT: Mutex<Option<(Instant, Option<Front>)>> = Mutex::new(None);
+/// Bumped by `forget_front`, so a lookup that started before it is not cached.
+static FRONT_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn front() -> Option<Front> {
+    use std::sync::atomic::Ordering::SeqCst;
+    if let Ok(g) = FRONT.lock() {
+        if let Some((at, v)) = g.as_ref() {
+            if at.elapsed() < FRONT_TTL {
+                return v.clone();
+            }
+        }
+    }
+    let gen = FRONT_GEN.load(SeqCst);
+    let v = read_front();
+    if let Ok(mut g) = FRONT.lock() {
+        if FRONT_GEN.load(SeqCst) == gen {
+            *g = Some((Instant::now(), v.clone()));
+        }
+    }
+    v
+}
+
+/// Forget the cached front window (after Oumu itself moves the focus).
+fn forget_front() {
+    FRONT_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut g) = FRONT.lock() {
+        *g = None;
+    }
+}
+
+fn read_front() -> Option<Front> {
     if kind() == Kind::Hyprland {
         let w = hyprland::active_window()?;
         return Some(Front {
@@ -91,10 +144,14 @@ pub fn front() -> Option<Front> {
     Some(Front { pid: f.pid, class: f.app.clone(), title: f.app, rect, fullscreen: false, key: f.bus })
 }
 
+/// A monitor's logical box `(x, y, w, h)`.
+type Monitor = (f64, f64, f64, f64);
+
 /// The primary monitor's logical box, when the desktop says which it is.
 pub fn primary_monitor() -> Option<(f64, f64, f64, f64)> {
+    static MONITOR: Mutex<Option<(Instant, Option<Monitor>)>> = Mutex::new(None);
     match kind() {
-        Kind::Hyprland => hyprland::primary_monitor(),
+        Kind::Hyprland => cached(&MONITOR, MONITOR_TTL, hyprland::primary_monitor),
         _ => None,
     }
 }
@@ -137,10 +194,14 @@ pub fn pointer() -> Option<(f64, f64)> {
 
 /// Bring the app `pid` to the front; `true` when it already is or now is.
 pub fn focus_pid(pid: i32) -> bool {
-    if front().is_some_and(|f| f.pid == pid) {
+    // Asked right before a paste: never trust a cached answer here.
+    if read_front().is_some_and(|f| f.pid == pid) {
+        forget_front();
         return true;
     }
-    kind() == Kind::Hyprland && hyprland::focus_pid(pid)
+    let moved = kind() == Kind::Hyprland && hyprland::focus_pid(pid);
+    forget_front();
+    moved
 }
 
 /// Press Ctrl+V in the window in front (`key`: the Hyprland address).
@@ -179,6 +240,19 @@ mod tests {
         // XWayland sets DISPLAY too: a Wayland session stays Wayland.
         assert_eq!(detect(false, true, true), Kind::Wayland);
         assert_eq!(detect(false, true, false), Kind::Wayland);
+    }
+
+    #[test]
+    fn a_cached_answer_is_reused_until_it_ages_out() {
+        let cache = Mutex::new(None);
+        let mut reads = 0;
+        let mut read = || {
+            reads += 1;
+            reads
+        };
+        assert_eq!(cached(&cache, Duration::from_secs(60), &mut read), 1);
+        assert_eq!(cached(&cache, Duration::from_secs(60), &mut read), 1, "fresh: no second read");
+        assert_eq!(cached(&cache, Duration::ZERO, &mut read), 2, "aged out: read again");
     }
 
     #[test]

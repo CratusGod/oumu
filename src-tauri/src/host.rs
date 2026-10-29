@@ -63,7 +63,6 @@ pub fn built_in_skip(bundle_id: &str) -> bool {
 pub fn skipped_app(bundle_id: &str, settings: &crate::settings::Settings) -> bool {
     !bundle_id.is_empty() && (built_in_skip(bundle_id) || settings.skip_apps.iter().any(|a| a.bundle_id == bundle_id))
 }
-const POLL: Duration = Duration::from_millis(220);
 const LINT_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Typing pause before the model judges the changed sentences.
 const SPOT_DEBOUNCE: Duration = Duration::from_millis(3500);
@@ -210,9 +209,33 @@ fn covered_by_panel(_app: &AppHandle) -> Option<Rect> {
     None
 }
 
+/// A field with no scroll pane found is looked again after this long (the
+/// walk can fail on a slow app, and then underlines would not be clipped).
+const SCROLL_AREA_RETRY: Duration = Duration::from_secs(2);
+
+thread_local! {
+    /// The scroll pane around the focused field, found once per field (a walk
+    /// up its ancestors) instead of every tick.
+    static SCROLL_AREA: std::cell::RefCell<Option<(u64, Option<AXElement>, Instant)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn scroll_area(el: &AXElement) -> Option<AXElement> {
+    let key = el.identity_hash();
+    SCROLL_AREA.with(|c| {
+        if let Some((k, sa, at)) = c.borrow().as_ref() {
+            if *k == key && (sa.is_some() || at.elapsed() < SCROLL_AREA_RETRY) {
+                return sa.clone();
+            }
+        }
+        let sa = el.enclosing_scroll_area();
+        *c.borrow_mut() = Some((key, sa.clone(), Instant::now()));
+        sa
+    })
+}
+
 fn visible_frame(el: &AXElement, frame: Rect) -> Rect {
     let mut vis = frame;
-    if let Some(sa) = el.enclosing_scroll_area() {
+    if let Some(sa) = scroll_area(el) {
         if let Some(f) = sa.frame() {
             if let Some(i) = vis.intersect(&f) {
                 vis = i;
@@ -229,7 +252,14 @@ fn visible_frame(el: &AXElement, frame: Rect) -> Rect {
     vis
 }
 
+/// Host loop ticks so far (the debug probe reports them).
+pub static TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn spawn(app: AppHandle, shared: Shared) {
+    #[cfg(target_os = "linux")]
+    if crate::linux::desktop::kind() == crate::linux::desktop::Kind::Hyprland {
+        crate::linux::hyprland::watch_front(crate::pace::wake);
+    }
     std::thread::Builder::new()
         .name("host-loop".into())
         .spawn(move || {
@@ -237,19 +267,128 @@ pub fn spawn(app: AppHandle, shared: Shared) {
             let system = AXElement::system_wide();
             let mut last_geom_sig = String::new();
             let mut last_status_sig = String::new();
+            let mut rects = RectCache::default();
+            let mut was_watching = false;
             loop {
+                TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let t0 = Instant::now();
-                tick(&app, &shared, &system, &mut engine, &mut last_geom_sig, &mut last_status_sig);
-                let spent = t0.elapsed();
-                if spent < POLL {
-                    std::thread::sleep(POLL - spent);
-                }
+                tick(&app, &shared, &system, &mut engine, &mut last_geom_sig, &mut last_status_sig, &mut rects);
+                let now_watching = watching(&shared);
+                crate::pace::settle_memory(was_watching, now_watching);
+                was_watching = now_watching;
+                let tick = crate::pace::tick_for(now_watching);
+                crate::pace::sleep(tick.saturating_sub(t0.elapsed()));
             }
         })
         .expect("host loop thread");
 }
 
-fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engine, last_geom_sig: &mut String, last_status_sig: &mut String) {
+/// Whether the loop has something to watch closely: a document in front, a
+/// pending check, or the panel out. Elsewhere than Linux nothing wakes the
+/// loop early, so it always ticks quickly there.
+fn watching(shared: &Shared) -> bool {
+    if cfg!(not(target_os = "linux")) || !overlay::is_tucked() {
+        return true;
+    }
+    shared
+        .lock()
+        .map(|st| st.doc.as_ref().is_some_and(|d| d.active) || st.lint_dirty || st.spot_dirty || st.spot_running)
+        .unwrap_or(true)
+}
+
+/// Underline boxes from the last full placement. Placing them asks the app
+/// for every line of every alert, so it is redone only when something that
+/// moves them changed: the text, the alerts, the field's box, the panel over
+/// it, the text on screen, or the position of the first and last alert on
+/// screen (scrolling by less than a line).
+#[derive(Default)]
+struct RectCache {
+    key: u64,
+    at: Option<Instant>,
+    rects: Vec<UnderlineRect>,
+}
+
+/// A full placement at least this often, in case text moved without the checks seeing it.
+const RECTS_MAX_AGE: Duration = Duration::from_secs(4);
+/// Up to this many alerts are placed without first asking which text is on screen.
+const FEW_ALERTS: usize = 12;
+
+/// Alerts at least partly inside the UTF-16 range `shown` (all of them when the app cannot say).
+fn on_screen(alerts: &[Alert], shown: Option<(usize, usize)>) -> Vec<Alert> {
+    match shown {
+        Some((s, e)) => alerts.iter().filter(|a| a.u16_end >= s && a.u16_start <= e).cloned().collect(),
+        None => alerts.to_vec(),
+    }
+}
+
+fn rect_key(doc: &HostDoc, el: &AXElement, alerts: &[Alert], shown: Option<(usize, usize)>, hidden: Option<&Rect>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let bits = |r: &Rect, h: &mut std::collections::hash_map::DefaultHasher| [r.x, r.y, r.w, r.h].iter().for_each(|v| v.to_bits().hash(h));
+    doc.id.hash(&mut h);
+    doc.version.hash(&mut h);
+    shown.hash(&mut h);
+    bits(&doc.visible, &mut h);
+    bits(&doc.frame, &mut h);
+    if let Some(p) = hidden {
+        bits(p, &mut h);
+    }
+    for a in alerts.iter().take(80) {
+        (&a.id, a.u16_start, a.u16_end).hash(&mut h);
+    }
+    // Scrolling moves the text but not the field: the first and last on-screen alert's boxes show it.
+    // A box the app does not answer (some browsers, for text scrolled away) counts as a value too.
+    for a in [alerts.first(), alerts.last()].into_iter().flatten() {
+        match el.bounds_for_range(a.u16_start, 1) {
+            Some(r) => bits(&r, &mut h),
+            None => u64::MAX.hash(&mut h),
+        }
+    }
+    h.finish()
+}
+
+fn place_underlines(el: &AXElement, alerts: &[Alert], vis: Rect, hidden: Option<&Rect>) -> Vec<UnderlineRect> {
+    let mut out = Vec::new();
+    for a in alerts.iter().take(80) {
+        for r in rects_for_range(el, a.u16_start, a.u16_end.saturating_sub(a.u16_start).max(1)) {
+            if hidden.is_some_and(|p| p.intersect(&r).is_some()) {
+                continue;
+            }
+            if let Some(c) = r.intersect(&vis) {
+                out.push(UnderlineRect {
+                    id: a.id.clone(),
+                    x: c.x - vis.x,
+                    y: c.y - vis.y,
+                    w: c.w,
+                    h: c.h,
+                    color: a.category.color().into(),
+                    category: format!("{:?}", a.category).to_lowercase(),
+                    sentence: a.kind.starts_with("Spot"),
+                });
+            }
+        }
+    }
+    out
+}
+
+impl RectCache {
+    fn get(&mut self, doc: &HostDoc, el: &AXElement, alerts: &[Alert], hidden: Option<&Rect>) -> Vec<UnderlineRect> {
+        // A few alerts are cheap to place; past that only the ones on screen are.
+        let shown = if alerts.len() > FEW_ALERTS { el.visible_text_range(&doc.visible) } else { None };
+        let alerts = on_screen(alerts, shown);
+        let key = rect_key(doc, el, &alerts, shown, hidden);
+        let fresh = self.at.is_some_and(|t| t.elapsed() < RECTS_MAX_AGE);
+        if key != self.key || !fresh {
+            self.rects = place_underlines(el, &alerts, doc.visible, hidden);
+            self.key = key;
+            self.at = Some(Instant::now());
+        }
+        self.rects.clone()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engine, last_geom_sig: &mut String, last_status_sig: &mut String, rects: &mut RectCache) {
     let trusted = ax::is_trusted();
     let front = ax::frontmost_app();
     let (front_pid, front_bid, front_name) = front.clone().unwrap_or((0, String::new(), String::new()));
@@ -482,25 +621,7 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
             let mut geometry = Geometry { origin_x: vis.x, origin_y: vis.y, width: vis.w, height: vis.h, rects: vec![], hovered: None, over_card: false };
             let hidden = covered_by_panel(app);
             if big_enough && show_underlines {
-                for a in alerts.iter().take(80) {
-                    for r in rects_for_range(&el, a.u16_start, a.u16_end.saturating_sub(a.u16_start).max(1)) {
-                        if hidden.as_ref().is_some_and(|p| p.intersect(&r).is_some()) {
-                            continue;
-                        }
-                        if let Some(c) = r.intersect(&vis) {
-                            geometry.rects.push(UnderlineRect {
-                                id: a.id.clone(),
-                                x: c.x - vis.x,
-                                y: c.y - vis.y,
-                                w: c.w,
-                                h: c.h,
-                                color: a.category.color().into(),
-                                category: format!("{:?}", a.category).to_lowercase(),
-                                sentence: a.kind.starts_with("Spot"),
-                            });
-                        }
-                    }
-                }
+                geometry.rects = rects.get(d, &el, &alerts, hidden.as_ref());
             }
             // hover detection
             let mut over_card = false;

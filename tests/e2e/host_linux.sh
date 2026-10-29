@@ -29,7 +29,7 @@ trap cleanup EXIT
 command -v hyprctl >/dev/null && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] || { echo "SKIPPED: needs a Hyprland session"; exit 2; }
 
 # Earlier runs may have dismissed fixture alerts; reset so the run is deterministic.
-SETTINGS="${XDG_DATA_HOME:-$HOME/.local/share}/dev.cratusgod.oumu/settings.json"
+SETTINGS="$E2E_DATA_HOME/dev.cratusgod.oumu/settings.json"
 [ -f "$SETTINGS" ] && python3 -I - "$SETTINGS" <<'PY'
 import json, sys
 p = sys.argv[1]

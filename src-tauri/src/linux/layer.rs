@@ -85,12 +85,33 @@ fn layer_for(label: &str) -> Layer {
 /// (call it from `setup`, right after the window is built).
 pub fn adopt(app: &AppHandle, label: &str) {
     if !gtk_layer_shell::is_supported() {
+        if label != "panel" && unmanage_on_x11(app, label) {
+            return;
+        }
         log::warn!("layer shell is not available; {label} stays a normal window (overlays will not follow text)");
         return;
     }
     if let Err(e) = try_adopt(app, label) {
         log::warn!("layer shell for {label} failed ({e}); keeping a normal window");
     }
+}
+
+/// On X11 an overlay (tab, button, underlines) is override-redirect: the window
+/// manager neither focuses nor places it, so showing one never takes the
+/// keyboard from the app being typed in. `false` off X11 (nothing changed).
+fn unmanage_on_x11(app: &AppHandle, label: &str) -> bool {
+    let Some(gw) = app.get_webview_window(label).and_then(|w| w.gtk_window().ok()) else { return false };
+    // A tooltip-type window is never given focus, also by XWayland compositors.
+    gw.set_type_hint(gtk::gdk::WindowTypeHint::Tooltip);
+    gw.set_accept_focus(false);
+    gw.realize();
+    let Some(gdk_window) = gw.window() else { return false };
+    if gdk_window.type_().name() != "GdkX11Window" {
+        return false;
+    }
+    gdk_window.set_override_redirect(true);
+    log::info!("{label}: X11 overlay window, not managed by the window manager");
+    true
 }
 
 fn try_adopt(app: &AppHandle, label: &str) -> Result<(), String> {
