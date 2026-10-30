@@ -154,6 +154,8 @@ pub fn run() {
             commands::take_pending_translation,
             commands::accept_alert,
             commands::dismiss_alert,
+            commands::learn_word,
+            commands::mute_rule,
             commands::replace_range,
             commands::run_feature,
             commands::chat_send,

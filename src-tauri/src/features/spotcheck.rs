@@ -835,7 +835,9 @@ pub fn alert_for(text: &str, map: &TextMap, sents: &[Sentence], k: usize, v: &Ve
             (a, b, orig, String::new())
         }
     };
-    let hash = stable_hash(kind, s.text.trim(), None);
+    // One key per sentence whatever the model calls it this time, so a
+    // dismissed sentence stays dismissed when the next check words it differently.
+    let hash = stable_hash("Spot", s.text.trim(), None);
     Alert {
         id: format!("spot-{:x}-{}", hash, start),
         category: Category::Clarity,
@@ -850,6 +852,8 @@ pub fn alert_for(text: &str, map: &TextMap, sents: &[Sentence], k: usize, v: &Ve
         suggestions: vec![suggestion],
         priority: 150,
         stable_hash: hash,
+        rule: "AI sentence check".into(),
+        rule_dismissals: 0,
     }
 }
 
@@ -1007,11 +1011,11 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache) -> anyh
 /// The list the panel shows: Harper + rule alerts, then spot-check sentences,
 /// minus everything dismissed. Harper's own long-sentence notice carries no
 /// rewrite, so it gives way to a spot rewrite that covers the same sentence.
-pub fn merge_visible(all: &[Alert], spot: &[Alert], dismissed: impl Fn(u64) -> bool) -> Vec<Alert> {
-    let spot: Vec<&Alert> = spot.iter().filter(|a| !dismissed(a.stable_hash)).collect();
+pub fn merge_visible(all: &[Alert], spot: &[Alert], hidden: impl Fn(&Alert) -> bool) -> Vec<Alert> {
+    let spot: Vec<&Alert> = spot.iter().filter(|a| !hidden(a)).collect();
     let mut v: Vec<Alert> = all
         .iter()
-        .filter(|a| !dismissed(a.stable_hash))
+        .filter(|a| !hidden(a))
         .filter(|a| !(a.kind == "Readability" && spot.iter().any(|s| s.u16_start < a.u16_end && a.u16_start < s.u16_end)))
         .cloned()
         .collect();
@@ -1144,7 +1148,7 @@ mod tests {
     }
 
     fn mk_alert(kind: &str, u16_start: usize, u16_end: usize, hash: u64) -> Alert {
-        Alert { id: format!("{kind}-{u16_start}"), category: Category::Clarity, kind: kind.into(), title: String::new(), message: String::new(), start: u16_start, end: u16_end, u16_start, u16_end, original: String::new(), suggestions: vec![], priority: 100, stable_hash: hash }
+        Alert { id: format!("{kind}-{u16_start}"), category: Category::Clarity, kind: kind.into(), title: String::new(), message: String::new(), start: u16_start, end: u16_end, u16_start, u16_end, original: String::new(), suggestions: vec![], priority: 100, stable_hash: hash, rule: kind.into(), rule_dismissals: 0 }
     }
 
     #[test]
@@ -1248,7 +1252,7 @@ mod tests {
     fn merge_hides_harpers_long_sentence_note_under_a_spot_rewrite() {
         let harper = vec![mk_alert("Readability", 10, 60, 1), mk_alert("Readability", 100, 150, 2), mk_alert("Spelling", 12, 14, 3)];
         let spot = vec![mk_alert("SpotRephrase", 10, 60, 4)];
-        let v = merge_visible(&harper, &spot, |h| h == 3);
+        let v = merge_visible(&harper, &spot, |a| a.stable_hash == 3);
         let kinds: Vec<(&str, usize)> = v.iter().map(|a| (a.kind.as_str(), a.u16_start)).collect();
         assert_eq!(kinds, vec![("Readability", 100), ("SpotRephrase", 10)], "the covered note and the dismissed word alert are gone, word alerts stay first");
     }

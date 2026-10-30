@@ -5,7 +5,7 @@ import type { Ctx } from "../Panel";
 import * as I from "../../components/icons";
 import { TitleBar, Empty } from "../Panel";
 import { ipc } from "../../lib/ipc";
-import { relativeTime } from "../../lib/text";
+import { relativeTime, ruleName } from "../../lib/text";
 import type { Settings } from "../../lib/types";
 import { AiSetup } from "./AiSetup";
 
@@ -48,6 +48,15 @@ export function SettingsView({ ctx }: { ctx: Ctx }) {
         <label className="kv"><span>Show the Oumu button next to text fields</span><input type="checkbox" checked={s.show_button} onChange={(e) => save({ ...s, show_button: e.target.checked })} /></label>
         <label className="kv"><span>Draw underlines in the app</span><input type="checkbox" checked={s.show_underlines} onChange={(e) => save({ ...s, show_underlines: e.target.checked })} /></label>
         <div className="row-actions"><button className="btn btn--outline" onClick={() => save({ ...s, dismissed: [] })}>Restore dismissed suggestions ({s.dismissed.length})</button></div>
+        <div className="section-label">Learned</div>
+        <p style={{ color: "var(--text-subdued)", fontSize: 13, margin: "2px 0 8px" }}>Words you added from a spelling card, and checks you turned off from a card.</p>
+        {s.dictionary.length === 0 && s.muted_rules.length === 0 && <p style={{ color: "var(--text-subdued)", fontSize: 13, margin: "0 0 8px" }}>Nothing yet.</p>}
+        {s.dictionary.map((w) => (
+          <div className="kv" key={"w:" + w}><span>{w}</span><button className="btn btn--outline" style={{ padding: "4px 10px" }} onClick={() => save({ ...s, dictionary: s.dictionary.filter((x) => x !== w) })}>Remove</button></div>
+        ))}
+        {s.muted_rules.map((r) => (
+          <div className="kv" key={"r:" + r}><span>{ruleName(r)} (off)</span><button className="btn btn--outline" style={{ padding: "4px 10px" }} onClick={() => save({ ...s, muted_rules: s.muted_rules.filter((x) => x !== r), rule_dismissals: { ...s.rule_dismissals, [r]: 0 } })}>Turn on</button></div>
+        ))}
         <div className="section-label">Skipped apps</div>
         <p style={{ color: "var(--text-subdued)", fontSize: 13, margin: "2px 0 8px" }}>Oumu stays out of terminals. Add other apps with "Skip this app" in the Review view.</p>
         {s.skip_apps.length === 0 ? <p style={{ color: "var(--text-subdued)", fontSize: 13, margin: "0 0 8px" }}>No apps added.</p> : s.skip_apps.map((a) => (

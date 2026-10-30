@@ -13,6 +13,8 @@ export const ipc = {
   getState: () => invoke<AppState>("get_state"),
   acceptAlert: (id: string, suggestion = 0) => invoke<{ method: string; new_text: string }>("accept_alert", { id, suggestion }),
   dismissAlert: (id: string) => invoke<void>("dismiss_alert", { id }),
+  learnWord: (id: string) => invoke<void>("learn_word", { id }),
+  muteRule: (id: string) => invoke<void>("mute_rule", { id }),
   replaceRange: (start: number, end: number, text: string) => invoke<{ method: string; new_text: string }>("replace_range", { start, end, text }),
   runFeature: <T = any>(name: string, args: Record<string, unknown> = {}) => invoke<T>("run_feature", { name, args }),
   chatSend: (reqId: string, messages: { role: string; content: string }[]) => invoke<string>("chat_send", { reqId, messages }),

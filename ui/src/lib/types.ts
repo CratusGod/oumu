@@ -12,6 +12,7 @@ export interface Alert {
   id: string; category: Category; kind: string; title: string; message: string;
   start: number; end: number; u16_start: number; u16_end: number; original: string;
   suggestions: string[]; priority: number; stable_hash: number;
+  rule: string; rule_dismissals: number;
 }
 
 export interface Status { trusted: boolean; frontmost: string; frontmost_bid: string; skipped: boolean; skip_built_in: boolean; has_doc: boolean; linting: boolean }
@@ -36,6 +37,7 @@ export interface Settings {
   search: { brave_key: string; searxng_url: string }; custom_voices: Voice[]; custom_audiences: Audience[];
   dismissed: number[]; target_language: string; citation_style: string; show_button: boolean; show_underlines: boolean; onboarded: boolean;
   auto_spot_check: boolean; skip_apps: SkipApp[]; theme: string; palette_path: string;
+  dictionary: string[]; muted_rules: string[]; rule_dismissals: Record<string, number>;
 }
 
 export interface MatugenStatus { ryoku: boolean; installed: boolean; registered: boolean; palette_ready: boolean; palette_path: string; config_path: string; next_command: string }

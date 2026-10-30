@@ -49,18 +49,58 @@ pub fn accept_alert_inner(app: &AppHandle, shared: &Shared, id: &str, suggestion
     Ok(res)
 }
 
-pub fn dismiss_alert_inner(app: &AppHandle, shared: &Shared, id: &str) -> Result<(), String> {
+/// What a card asks Oumu to remember about an alert.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Forget {
+    /// This alert, here and everywhere it comes back.
+    Dismiss,
+    /// The flagged word is spelled right: add it to the dictionary.
+    LearnWord,
+    /// Turn off the check that raised it.
+    MuteRule,
+}
+
+/// Apply `what` to the alert `id`, save the settings and refresh the visible
+/// alerts. The id is looked up in every list the host keeps, so a card opened
+/// just before a re-lint still works; an unknown id is an error, not a no-op.
+pub fn forget_alert_inner(app: &AppHandle, shared: &Shared, id: &str, what: Forget) -> Result<(), String> {
     let mut st = shared.lock().unwrap();
-    if let Some(a) = st.alerts.iter().find(|a| a.id == id).cloned() {
-        st.settings.dismissed.insert(a.stable_hash);
-        let _ = settings::save(&st.settings);
-        st.alerts.retain(|x| x.stable_hash != a.stable_hash);
-        st.spot_alerts.retain(|x| x.stable_hash != a.stable_hash);
-    }
+    let a = st
+        .alerts
+        .iter()
+        .chain(st.all_alerts.iter())
+        .chain(st.spot_alerts.iter())
+        .find(|a| a.id == id)
+        .cloned()
+        .ok_or("That suggestion is gone; the text changed.")?;
+    remember(&mut st.settings, &a, what);
+    let _ = settings::save(&st.settings);
+    st.alerts = st.visible_alerts();
     let alerts = st.alerts.clone();
+    let s = st.settings.clone();
     drop(st);
     let _ = app.emit("host://alerts", &alerts);
+    let _ = app.emit("settings://changed", &s);
     Ok(())
+}
+
+fn remember(s: &mut settings::Settings, a: &crate::engine::Alert, what: Forget) {
+    match what {
+        Forget::Dismiss => {
+            s.dismissed.insert(a.stable_hash);
+            *s.rule_dismissals.entry(a.rule.clone()).or_default() += 1;
+        }
+        Forget::LearnWord => {
+            s.dictionary.insert(a.original.trim().to_lowercase());
+        }
+        Forget::MuteRule => {
+            s.muted_rules.insert(a.rule.clone());
+        }
+    }
+}
+
+pub fn dismiss_alert_inner(app: &AppHandle, shared: &Shared, id: &str) -> Result<(), String> {
+    forget_alert_inner(app, shared, id, Forget::Dismiss)
 }
 
 pub fn replace_range_inner(app: &AppHandle, shared: &Shared, start: usize, end: usize, text: &str) -> Result<crate::apply::ApplyResult, String> {
@@ -341,6 +381,17 @@ pub fn dismiss_alert(app: AppHandle, state: State<'_, Shared>, id: String) -> Re
     dismiss_alert_inner(&app, &state, &id)
 }
 
+#[tauri::command]
+pub fn learn_word(app: AppHandle, state: State<'_, Shared>, id: String) -> Result<(), String> {
+    forget_alert_inner(&app, &state, &id, Forget::LearnWord)
+}
+
+#[tauri::command]
+pub fn mute_rule(app: AppHandle, state: State<'_, Shared>, id: String) -> Result<(), String> {
+    forget_alert_inner(&app, &state, &id, Forget::MuteRule)
+}
+
+
 // Linux: AT-SPI calls, sleeps and clipboard work; run on Tauri's worker pool, not the GTK main thread.
 #[cfg_attr(target_os = "linux", tauri::command(async))]
 #[cfg_attr(not(target_os = "linux"), tauri::command)]
@@ -398,8 +449,9 @@ pub fn set_settings(app: AppHandle, state: State<'_, Shared>, settings: Settings
         let mut st = state.lock().unwrap();
         st.settings = settings.clone();
         settings::save(&st.settings).map_err(err)?;
-        // Re-apply the dismissed filter.
+        // Re-apply the dismissed, dictionary and turned-off-rule filters.
         st.alerts = st.visible_alerts();
+        let _ = app.emit("host://alerts", &st.alerts);
     }
     crate::overlay::dock_panel(&app, &settings.dock_side);
     let _ = app.emit("settings://changed", &settings);

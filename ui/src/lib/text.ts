@@ -99,3 +99,9 @@ export function sameLang(a: string, b: string): boolean {
   const base = (x: string) => x.split("(")[0].trim().toLowerCase();
   return !!a && !!b && base(a) === base(b);
 }
+
+/** "SentenceCapitalization" → "Sentence capitalization". */
+export function ruleName(rule: string) {
+  const words = rule.replace(/([a-z])([A-Z])/g, "$1 $2");
+  return words.charAt(0) + words.slice(1).toLowerCase();
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initials, keyKind, relativeTime, sameLang, wordCount, wordDiff } from "./text";
+import { initials, keyKind, relativeTime, ruleName, sameLang, wordCount, wordDiff } from "./text";
 
 describe("keyKind", () => {
   it("names the provider from the key prefix", () => {
@@ -50,5 +50,12 @@ describe("sameLang", () => {
     expect(sameLang("english", "English (British)")).toBe(true);
     expect(sameLang("English", "Vietnamese")).toBe(false);
     expect(sameLang("", "English")).toBe(false);
+  });
+});
+
+describe("ruleName", () => {
+  it("turns a Harper rule id into words", () => {
+    expect(ruleName("SentenceCapitalization")).toBe("Sentence capitalization");
+    expect(ruleName("Remove the filler")).toBe("Remove the filler");
   });
 });

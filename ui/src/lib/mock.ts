@@ -18,7 +18,7 @@ let n = 0;
 function alert(category: Category, kind: string, title: string, message: string, needle: string, suggestions: string[], priority = 100): Alert {
   const r = range(needle);
   n += 1;
-  return { id: `mock-${n}`, category, kind, title, message, start: r.start, end: r.end, u16_start: r.start, u16_end: r.end, original: needle, suggestions, priority, stable_hash: n };
+  return { id: `mock-${n}`, category, kind, title, message, start: r.start, end: r.end, u16_start: r.start, u16_end: r.end, original: needle, suggestions, priority, stable_hash: n, rule: kind, rule_dismissals: 0 };
 }
 
 const LONG = "i wish i could say that i felt some sort of conviction, but honestly, it was stranger than anything i had ever experienced, and with every day that went by without results i couldnt help but question if i had made the right choice.";
@@ -46,7 +46,7 @@ const SCORE: Score = {
 const SETTINGS: Settings = {
   llm: { provider: "gemini", base_url: "https://generativelanguage.googleapis.com/v1beta", api_key: "AQ.mock", model: "gemini-3.6-flash" },
   dock_side: "left", rail_side: "right", user_name: "Alex Example", search: { brave_key: "", searxng_url: "" },
-  custom_voices: [], custom_audiences: [], dismissed: [], target_language: "Spanish", citation_style: "MLA",
+  custom_voices: [], custom_audiences: [], dismissed: [], dictionary: [], muted_rules: [], rule_dismissals: {}, target_language: "Spanish", citation_style: "MLA",
   show_button: true, show_underlines: true, onboarded: true, auto_spot_check: true, skip_apps: [], theme: "default", palette_path: "",
 };
 

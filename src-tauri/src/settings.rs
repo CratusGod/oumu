@@ -1,7 +1,7 @@
 //! Persistent settings (JSON under Application Support).
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 /// The app's folder name under ~/.config (palette file) and the like.
@@ -83,6 +83,12 @@ pub struct Settings {
     pub custom_voices: Vec<Voice>,
     pub custom_audiences: Vec<Audience>,
     pub dismissed: HashSet<u64>,
+    /// Words added from a spelling card; never flagged as misspelled again (lowercase).
+    pub dictionary: BTreeSet<String>,
+    /// Checks turned off from a card (`Alert::rule`).
+    pub muted_rules: BTreeSet<String>,
+    /// Dismissals per rule, so the card can offer to turn a rule off.
+    pub rule_dismissals: HashMap<String, u32>,
     pub target_language: String,
     pub citation_style: String,
     /// The floating Oumu button by the text field (older files call it `show_gbutton`).
@@ -100,6 +106,16 @@ pub struct Settings {
     pub palette_path: String,
 }
 
+impl Settings {
+    /// Whether the user said not to show this alert: dismissed, its check
+    /// turned off, or a spelling note on a word they added to the dictionary.
+    pub fn hides(&self, a: &crate::engine::Alert) -> bool {
+        self.dismissed.contains(&a.stable_hash)
+            || self.muted_rules.contains(&a.rule)
+            || (a.kind == "Spelling" && self.dictionary.contains(&a.original.trim().to_lowercase()))
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -111,6 +127,9 @@ impl Default for Settings {
             custom_voices: vec![],
             custom_audiences: vec![],
             dismissed: HashSet::new(),
+            dictionary: BTreeSet::new(),
+            muted_rules: BTreeSet::new(),
+            rule_dismissals: HashMap::new(),
             target_language: "English (American)".into(),
             citation_style: "APA".into(),
             show_button: true,
@@ -238,6 +257,45 @@ pub fn save(s: &Settings) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    fn alert(kind: &str, rule: &str, original: &str, hash: u64) -> crate::engine::Alert {
+        crate::engine::Alert {
+            id: format!("{hash:x}-0"),
+            category: crate::engine::Category::Correctness,
+            kind: kind.into(),
+            title: String::new(),
+            message: String::new(),
+            start: 0,
+            end: original.chars().count(),
+            u16_start: 0,
+            u16_end: original.encode_utf16().count(),
+            original: original.into(),
+            suggestions: vec![],
+            priority: 1,
+            stable_hash: hash,
+            rule: rule.into(),
+            rule_dismissals: 0,
+        }
+    }
+
+    #[test]
+    fn hides_dismissed_alerts_turned_off_rules_and_learned_words() {
+        let mut s = Settings::default();
+        s.dismissed.insert(1);
+        s.muted_rules.insert("SentenceCapitalization".into());
+        s.dictionary.insert("oumu".into());
+        assert!(s.hides(&alert("Spelling", "SpellCheck", "teh", 1)), "dismissed");
+        assert!(s.hides(&alert("Capitalization", "SentenceCapitalization", "hello", 2)), "rule off");
+        assert!(s.hides(&alert("Spelling", "SpellCheck", "Oumu ", 3)), "learned word, any case");
+        assert!(!s.hides(&alert("Spelling", "SpellCheck", "teh", 4)), "same word, not dismissed");
+        assert!(!s.hides(&alert("Style", "Other", "oumu", 5)), "the dictionary only covers spelling");
+    }
+
+    #[test]
+    fn older_settings_files_load_without_the_learned_lists() {
+        let s: Settings = serde_json::from_str(r#"{"dismissed":[7]}"#).unwrap();
+        assert!(s.dictionary.is_empty() && s.muted_rules.is_empty() && s.rule_dismissals.is_empty());
+    }
+
     #[test]
     fn gecos_full_name_is_the_first_comma_field() {
         assert_eq!(super::gecos_name("hilda:x:1000:1000:Hilda N,,,:/home/hilda:/bin/zsh").as_deref(), Some("Hilda N"));

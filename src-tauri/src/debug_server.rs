@@ -67,9 +67,11 @@ fn handle(app: &AppHandle, shared: &Shared, path: &str, args: Value) -> Result<V
             let idx = args["suggestion"].as_u64().unwrap_or(0) as usize;
             crate::commands::accept_alert_inner(app, shared, &id, idx).map(|r| serde_json::to_value(r).unwrap())
         }
-        "/dismiss" => {
+        "/dismiss" | "/learn" | "/mute" => {
+            use crate::commands::Forget;
             let id = args["id"].as_str().ok_or("id required")?.to_string();
-            crate::commands::dismiss_alert_inner(app, shared, &id)?;
+            let what = match path { "/learn" => Forget::LearnWord, "/mute" => Forget::MuteRule, _ => Forget::Dismiss };
+            crate::commands::forget_alert_inner(app, shared, &id, what)?;
             Ok(json!({"ok": true}))
         }
         "/replace" => {

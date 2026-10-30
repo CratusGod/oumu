@@ -168,7 +168,11 @@ impl HostState {
     /// sentences, minus everything dismissed. Word-level alerts come first so
     /// a hover over a word inside a flagged sentence opens the word's card.
     pub fn visible_alerts(&self) -> Vec<Alert> {
-        crate::features::spotcheck::merge_visible(&self.all_alerts, &self.spot_alerts, |h| self.settings.dismissed.contains(&h))
+        let mut v = crate::features::spotcheck::merge_visible(&self.all_alerts, &self.spot_alerts, |a| self.settings.hides(a));
+        for a in &mut v {
+            a.rule_dismissals = self.settings.rule_dismissals.get(&a.rule).copied().unwrap_or(0);
+        }
+        v
     }
 }
 
@@ -676,7 +680,12 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
             }
             if !last_geom_sig.is_empty() {
                 last_geom_sig.clear();
-                shared.lock().unwrap().geometry = Geometry::default();
+                let mut st = shared.lock().unwrap();
+                st.geometry = Geometry::default();
+                // No card can be open without a field; a stale card rect would
+                // make the next field's underline window catch clicks there.
+                st.card_rects.clear();
+                drop(st);
                 let _ = app.emit_to("underlines", "host://geometry", Geometry::default());
             }
         }

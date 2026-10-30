@@ -178,6 +178,8 @@ mod tests {
             suggestions: vec![],
             priority: 1,
             stable_hash: 1,
+            rule: "r".into(),
+            rule_dismissals: 0,
         }
     }
 

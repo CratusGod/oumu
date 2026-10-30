@@ -2,7 +2,7 @@
 //! categories, plus small rule-based Delivery/Engagement passes.
 
 use crate::textmap::TextMap;
-use harper_core::linting::{LintGroup, LintKind, Linter, Suggestion};
+use harper_core::linting::{LintGroup, LintKind, Suggestion};
 use harper_core::spell::FstDictionary;
 use harper_core::{Dialect, Document};
 use regex::Regex;
@@ -47,8 +47,16 @@ pub struct Alert {
     pub original: String,
     pub suggestions: Vec<String>,
     pub priority: u8,
-    /// Stable across edits elsewhere in the document: hash(kind, original, first suggestion).
+    /// Stable across edits elsewhere in the document: hash(kind, original).
     pub stable_hash: u64,
+    /// The check that raised it (a Harper rule name, a Delivery title, the
+    /// spot-check kind): what "Turn off this rule" turns off.
+    #[serde(default)]
+    pub rule: String,
+    /// How often alerts from this rule were dismissed (the card offers to turn
+    /// the rule off once that is a habit). Filled in by `HostState::visible_alerts`.
+    #[serde(default)]
+    pub rule_dismissals: u32,
 }
 
 pub struct Engine {
@@ -65,9 +73,9 @@ impl Engine {
         let map = TextMap::new(text);
         let doc = Document::new_plain_english_curated(text);
         let source = doc.get_source();
-        let lints = self.group.lint(&doc);
-        let mut out: Vec<Alert> = Vec::with_capacity(lints.len());
-        for lint in lints {
+        let lints = self.group.organized_lints(&doc);
+        let mut out: Vec<Alert> = Vec::with_capacity(lints.values().map(Vec::len).sum());
+        for (rule, lint) in lints.into_iter().flat_map(|(rule, v)| v.into_iter().map(move |l| (rule.clone(), l))) {
             let start = lint.span.start.min(source.len());
             let end = lint.span.end.min(source.len()).max(start);
             if end == start {
@@ -109,7 +117,9 @@ impl Engine {
             } else {
                 lint.message.clone()
             };
-            let stable_hash = stable_hash(&kind.to_string(), &original, suggestions.first().map(|s| s.as_str()));
+            // Not the suggestion: it can change with the words around the
+            // flagged ones, and a dismissed alert must stay dismissed.
+            let stable_hash = stable_hash(&kind.to_string(), &original, None);
             let id = format!("{:x}-{}", stable_hash, start);
             out.push(Alert {
                 id,
@@ -125,6 +135,8 @@ impl Engine {
                 suggestions,
                 priority: lint.priority,
                 stable_hash,
+                rule,
+                rule_dismissals: 0,
             });
         }
         out.extend(delivery_rules(text, &map));
@@ -286,6 +298,8 @@ fn delivery_rules(text: &str, map: &TextMap) -> Vec<Alert> {
                 suggestions,
                 priority: 200,
                 stable_hash: stable,
+                rule: rule.title.into(),
+                rule_dismissals: 0,
             });
         }
     }
@@ -324,6 +338,8 @@ fn engagement_rules(text: &str, map: &TextMap) -> Vec<Alert> {
             suggestions: vec![],
             priority: 220,
             stable_hash: stable,
+            rule: "Overused words".into(),
+            rule_dismissals: 0,
         });
     }
     out
@@ -349,6 +365,16 @@ fn char_prefix(text: &str) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alerts_name_their_rule_and_keep_their_key_when_the_suggestion_changes() {
+        let alerts = super::Engine::new().check("I think that we should just ship Zorbleflax today.");
+        let spell = alerts.iter().find(|a| a.original == "Zorbleflax").expect("an unknown word is flagged");
+        assert_eq!((spell.kind.as_str(), spell.rule.as_str()), ("Spelling", "SpellCheck"));
+        assert!(alerts.iter().any(|a| a.kind == "Delivery" && a.rule == "Remove the filler"), "{alerts:?}");
+        assert!(alerts.iter().all(|a| !a.rule.is_empty()));
+        assert_eq!(super::stable_hash("Spelling", "Zorbleflax", None), spell.stable_hash, "the dismiss key ignores the suggestion");
+    }
+
     #[test]
     fn a_long_sentence_note_carries_an_instant_lossless_split() {
         let text = "The committee reviewed the three proposals on Tuesday and asked each team for a revised budget by Friday, and it plans to announce the winner at the all-hands meeting on the first of March, which gives everyone time to prepare their slides and book travel.";

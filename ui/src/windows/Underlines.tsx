@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { ipc, on } from "../lib/ipc";
-import { wordDiff } from "../lib/text";
+import { ruleName, wordDiff } from "../lib/text";
 import type { Alert, Geometry } from "../lib/types";
 
 const CARD_W = 300;
+/** Dismissals of one rule before the card offers to turn it off. */
+const MUTE_OFFER_AFTER = 2;
 
 export function Underlines() {
   const [geo, setGeo] = useState<Geometry>({ origin_x: 0, origin_y: 0, width: 0, height: 0, rects: [], hovered: null, over_card: false });
   const [alerts, setAlerts] = useState<Record<string, Alert>>({});
   const [open, setOpen] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const closeTimer = useRef<number | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
@@ -34,17 +37,19 @@ export function Underlines() {
     }
   }, [geo.hovered, geo.over_card, open]);
 
-  // Close when the open alert's underline is gone (accepted, dismissed, re-linted away).
+  // Close when the open alert or its underline is gone (accepted, dismissed,
+  // re-linted away, scrolled out of view). A card with nothing to anchor to
+  // must close, or its stale rect keeps the host treating the pointer as over it.
   useEffect(() => {
-    if (open && geo.rects.length > 0 && !geo.rects.some((r) => r.id === open)) setOpen(null);
-  }, [geo.rects, open]);
+    if (open && (!geo.rects.some((r) => r.id === open) || !alerts[open])) setOpen(null);
+  }, [geo.rects, alerts, open]);
+  useEffect(() => setError(null), [open]);
 
   // Report the card rect plus a bridge from the underline to the card, so the host
   // keeps this window live (and "over_card" true) while the pointer crosses the gap.
   useEffect(() => {
-    if (!open) { ipc.setCardRects([]).catch(() => {}); return; }
     const el = cardRef.current;
-    if (!el) return;
+    if (!open || !el) { ipc.setCardRects([]).catch(() => {}); return; }
     const r = el.getBoundingClientRect();
     const rects = [{ x: r.left, y: r.top, w: r.width, h: r.height }];
     const a = geo.rects.find((x) => x.id === open);
@@ -54,7 +59,11 @@ export function Underlines() {
       rects.push({ x: Math.min(a.x, r.left), y: top, w: Math.max(a.w, 48), h: bottom - top });
     }
     ipc.setCardRects(rects).catch(() => {});
-  }, [open, geo.width, geo.height, geo.rects]);
+  }, [open, alerts, geo.width, geo.height, geo.rects]);
+
+  const act = (call: Promise<unknown>) => {
+    call.then(() => setOpen(null)).catch((e) => setError(String(e)));
+  };
 
   const alert = open ? alerts[open] : undefined;
   const anchor = open ? geo.rects.find((r) => r.id === open) : undefined;
@@ -94,12 +103,22 @@ export function Underlines() {
             )}
           </div>
           <div style={{ fontSize: 13, color: "var(--text-subdued)", marginBottom: 12 }}>{alert.message}</div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             {alert.suggestions.length > 0 && (
-              <button className="btn btn--primary" style={{ padding: "8px 14px" }} onClick={() => { ipc.acceptAlert(alert.id, 0).catch(() => {}); setOpen(null); }}>Accept</button>
+              <button className="btn btn--primary" style={{ padding: "8px 14px" }} onClick={() => act(ipc.acceptAlert(alert.id, 0))}>Accept</button>
             )}
-            <button className="btn btn--ghost" onClick={() => { ipc.dismissAlert(alert.id).catch(() => {}); setOpen(null); }}>Dismiss</button>
+            <button className="btn btn--ghost" onClick={() => act(ipc.dismissAlert(alert.id))}>Dismiss</button>
+            {alert.kind === "Spelling" && (
+              <button className="btn btn--ghost" onClick={() => act(ipc.learnWord(alert.id))}>Add to dictionary</button>
+            )}
           </div>
+          {alert.rule && alert.rule_dismissals >= MUTE_OFFER_AFTER && (
+            <div style={{ fontSize: 12, color: "var(--text-subdued)", marginTop: 10 }}>
+              You dismissed “{ruleName(alert.rule)}” {alert.rule_dismissals} times.{" "}
+              <button className="btn btn--ghost" style={{ padding: "2px 6px", fontSize: 12 }} onClick={() => act(ipc.muteRule(alert.id))}>Turn it off</button>
+            </div>
+          )}
+          {error && <div style={{ fontSize: 12, color: "var(--correctness)", marginTop: 8 }}>{error}</div>}
         </div>
       )}
     </div>
