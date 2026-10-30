@@ -10,6 +10,7 @@ pub mod ax;
 pub mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{apply, ax};
+pub mod casual;
 pub mod commands;
 pub mod debug_server;
 pub mod engine;

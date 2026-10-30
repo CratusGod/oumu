@@ -82,12 +82,18 @@ const OFF_BY_DEFAULT: &[&str] = &[
     "MergeWords",
     "PhrasalVerbAsCompoundNoun",
     "WrongNegative",
+    // "Can you send me the slides" → "your": wrong far more often than right.
+    "PossessiveYour",
 ];
 
 /// Everyday chat words Harper's dictionary lacks; flagging "ok" as "oak" is noise.
 const INFORMAL: &[&str] = &[
     "ok", "lol", "btw", "imo", "imho", "tbh", "idk", "irl", "fyi", "asap", "omg", "brb", "afaik",
     "gonna", "wanna", "gotta", "kinda", "sorta", "yeah", "yep", "nope", "nah", "hmm", "uh", "ya",
+    "u", "ur", "lmao", "lmfao", "rn", "ngl", "ikr", "smh", "pls", "plz", "thx", "ty", "np", "gg",
+    "wtf", "wth", "af", "bc", "cuz", "dm", "dms", "jk", "nvm", "ofc", "omw", "tho", "idc", "ily",
+    "kk", "xd", "w/", "hotfix", "hotfixes", "wifi", "screenshot", "screenshots", "gameplay",
+    "livestream", "username", "login", "logout", "dev", "devs", "repo", "repos", "config",
 ];
 
 /// A word Harper's dictionary cannot know but that is not a typo: a name
@@ -206,6 +212,9 @@ impl Engine {
         let foreign = crate::foreign::ForeignMask::new(text);
         out.retain(|a| !foreign.covers(a.start, a.end));
         out.retain(|a| !looks_like_code_or_name(text, a));
+        // Our contraction notes replace Harper's on the same words ("im" → "i").
+        out.retain(|a| crate::style_rules::contraction(&a.original.to_lowercase()).is_none());
+        out.extend(crate::style_rules::missing_apostrophes(text, &map));
         out.extend(crate::style_rules::delivery(text, &map));
         out.extend(crate::style_rules::engagement(text, &map));
         // Remove overlapping duplicates (keep the first, higher-priority entry).

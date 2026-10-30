@@ -63,6 +63,8 @@ pub struct Sentence {
 pub enum Verdict {
     Rephrase { text: String, why: String, flags: Vec<String> },
     Remove { why: String, flags: Vec<String> },
+    /// The sentence with only its grammar corrected; shown as word-sized edits.
+    Grammar { text: String, why: String },
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -632,6 +634,20 @@ pub struct RawItem {
     pub confidence: Option<u64>,
     #[serde(default)]
     pub flags: Vec<String>,
+    /// The sentence with only real grammar mistakes corrected, or "".
+    #[serde(default)]
+    pub fix: String,
+    #[serde(default)]
+    pub fix_why: String,
+}
+
+/// The model's grammar fix for `orig`, if it is one (word-sized edits only).
+pub fn grammar_verdict(item: &RawItem, orig: &str) -> Option<Result<Verdict, super::grammar_fix::FixReject>> {
+    let fixed = item.fix.trim();
+    if fixed.is_empty() {
+        return None;
+    }
+    Some(super::grammar_fix::check(orig, fixed).map(|_| Verdict::Grammar { text: fixed.to_string(), why: polish_reason(&item.fix_why) }))
 }
 
 /// Why a verdict was rejected (for the tuning log / tests).
@@ -825,6 +841,7 @@ fn title_and_message(v: &Verdict) -> (&'static str, &'static str, String) {
             };
             (kind, title, if why.is_empty() { default.to_string() } else { why.clone() })
         }
+        Verdict::Grammar { why, .. } => ("SpotGrammar", "Fix the grammar", why.clone()),
         Verdict::Remove { why, flags } => {
             let f = flags.join(" ");
             let (title, default) = if f.contains("repeat") {
@@ -853,7 +870,7 @@ pub fn alert_for(text: &str, map: &TextMap, sents: &[Sentence], k: usize, v: &Ve
     let s = &sents[k];
     let (kind, title, message) = title_and_message(v);
     let (start, end, original, suggestion) = match v {
-        Verdict::Rephrase { text: t, .. } => (s.start, s.end, s.text.clone(), t.clone()),
+        Verdict::Rephrase { text: t, .. } | Verdict::Grammar { text: t, .. } => (s.start, s.end, s.text.clone(), t.clone()),
         Verdict::Remove { .. } => {
             let (a, b) = remove_range(sents, k);
             let orig: String = text.chars().skip(a).take(b - a).collect();
@@ -913,7 +930,7 @@ pub fn re_anchor(alerts: &mut Vec<Alert>, text: &str) {
 /// rewrite of its wordy phrases, run through the same guards.
 fn plain_verdict(orig: &str, earlier: &[&str], doc_rest: &str) -> Option<Verdict> {
     if let Some((text, flags)) = plain_rewrite(orig) {
-        let item = RawItem { i: 0, action: "rephrase".into(), text, why: "Plain words say the same thing in less space.".into(), confidence: Some(5), flags };
+        let item = RawItem { fix: String::new(), fix_why: String::new(), i: 0, action: "rephrase".into(), text, why: "Plain words say the same thing in less space.".into(), confidence: Some(5), flags };
         if let Ok(Some(v)) = validate(&item, orig, earlier, doc_rest) {
             return Some(v);
         }
@@ -923,7 +940,7 @@ fn plain_verdict(orig: &str, earlier: &[&str], doc_rest: &str) -> Option<Verdict
     let n = word_count(orig);
     if n > SPLIT_FALLBACK_WORDS {
         let text = plain_split(orig)?;
-        let item = RawItem { i: 0, action: "rephrase".into(), text, why: format!("This sentence runs {n} words. Two shorter sentences make the same points and read faster."), confidence: Some(5), flags: vec!["too long".into()] };
+        let item = RawItem { fix: String::new(), fix_why: String::new(), i: 0, action: "rephrase".into(), text, why: format!("This sentence runs {n} words. Two shorter sentences make the same points and read faster."), confidence: Some(5), flags: vec!["too long".into()] };
         return validate(&item, orig, earlier, doc_rest).ok().flatten();
     }
     None
@@ -975,6 +992,18 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
             let key = cache_key(&prev_of(k), &sents[k].text);
             let earlier: Vec<&str> = sents[..k].iter().filter(|s| s.judge).map(|s| s.text.as_str()).collect();
             let doc_rest: String = sents.iter().enumerate().filter(|(j, _)| *j != k).map(|(_, s)| s.text.as_str()).collect::<Vec<_>>().join(" ");
+            // A grammar mistake comes first: fix it, and judge style once it is gone.
+            match by_i.get(&(n as u64 + 1)).and_then(|item| grammar_verdict(item, &sents[k].text)) {
+                Some(Ok(v)) => {
+                    candidates.push((k, 5, v));
+                    continue;
+                }
+                Some(Err(r)) => {
+                    out.rejected += 1;
+                    out.rejections.push(format!("Grammar{r:?}: {}", sents[k].text.chars().take(50).collect::<String>()));
+                }
+                None => {}
+            }
             let model_verdict = match by_i.get(&(n as u64 + 1)) {
                 Some(item) => match validate(item, &sents[k].text, &earlier, &doc_rest) {
                     Ok(v) => Some((item.confidence.unwrap_or(5), v)),
@@ -985,6 +1014,19 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
                     }
                 },
                 None => None,
+            };
+            // A "rephrase" that only changes a word or two is a grammar fix the
+            // model filed in the wrong place; a paragraph's opening sentence
+            // (its topic, "In conclusion, …") is never removed.
+            let opens_paragraph = k == 0 || sents[k - 1].line != sents[k].line;
+            let model_verdict = match model_verdict {
+                Some((c, Some(Verdict::Rephrase { text: t, why, .. }))) if super::grammar_fix::check(&sents[k].text, &t).is_ok() => Some((c, Some(Verdict::Grammar { text: t, why }))),
+                Some((_, Some(Verdict::Remove { .. }))) if opens_paragraph => {
+                    out.rejected += 1;
+                    out.rejections.push(format!("RemoveParagraphOpener: {}", sents[k].text.chars().take(50).collect::<String>()));
+                    None
+                }
+                other => other,
             };
             match model_verdict {
                 Some((c, Some(v))) => candidates.push((k, c, v)),
@@ -1017,7 +1059,7 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
         let mut unhinted_kept = 0usize;
         for (idx, (k, _, v)) in candidates.into_iter().enumerate() {
             let key = cache_key(&prev_of(k), &sents[k].text);
-            let keep = if hinted[idx] { true } else { unhinted_kept += 1; unhinted_kept <= cap };
+            let keep = if hinted[idx] || matches!(v, Verdict::Grammar { .. }) { true } else { unhinted_kept += 1; unhinted_kept <= cap };
             if keep {
                 cache.insert(key, Some(v.clone()));
                 verdicts.insert(k, v);
@@ -1034,7 +1076,14 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
     let mut keys: Vec<usize> = verdicts.keys().copied().collect();
     keys.sort_unstable();
     for k in keys {
-        out.alerts.push(alert_for(text, &map, &sents, k, &verdicts[&k]));
+        match &verdicts[&k] {
+            Verdict::Grammar { text: fixed, why } => {
+                if let Ok(edits) = super::grammar_fix::check(&sents[k].text, fixed) {
+                    out.alerts.extend(super::grammar_fix::alerts(&map, &sents[k], &edits, why));
+                }
+            }
+            v => out.alerts.push(alert_for(text, &map, &sents, k, v)),
+        }
     }
     Ok(out)
 }
@@ -1043,7 +1092,10 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
 /// minus everything dismissed. Harper's own long-sentence notice carries no
 /// rewrite, so it gives way to a spot rewrite that covers the same sentence.
 pub fn merge_visible(all: &[Alert], spot: &[Alert], hidden: impl Fn(&Alert) -> bool) -> Vec<Alert> {
-    let spot: Vec<&Alert> = spot.iter().filter(|a| !hidden(a)).collect();
+    // An AI grammar note on words Harper already flagged would be a second
+    // card for the same mistake: Harper's stays.
+    let harper_correctness = |s: &Alert| all.iter().any(|a| a.category == Category::Correctness && a.u16_start < s.u16_end && s.u16_start < a.u16_end);
+    let spot: Vec<&Alert> = spot.iter().filter(|a| !hidden(a) && !(a.kind == "SpotGrammar" && harper_correctness(a))).collect();
     let mut v: Vec<Alert> = all
         .iter()
         .filter(|a| !hidden(a))
@@ -1114,7 +1166,7 @@ mod tests {
     }
 
     fn item(action: &str, text: &str, conf: u64, flags: &[&str]) -> RawItem {
-        RawItem { i: 1, action: action.into(), text: text.into(), why: "shorter".into(), confidence: Some(conf), flags: flags.iter().map(|f| f.to_string()).collect() }
+        RawItem { fix: String::new(), fix_why: String::new(), i: 1, action: action.into(), text: text.into(), why: "shorter".into(), confidence: Some(conf), flags: flags.iter().map(|f| f.to_string()).collect() }
     }
 
     #[test]

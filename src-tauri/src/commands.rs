@@ -737,3 +737,48 @@ pub async fn probe_key(key: String) -> Result<Value, String> {
     probe_key_inner(&key).await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Alert, Category};
+
+    fn alert(kind: &str, rule: &str, original: &str) -> Alert {
+        Alert {
+            id: "a-0".into(),
+            category: Category::Correctness,
+            kind: kind.into(),
+            title: String::new(),
+            message: String::new(),
+            start: 0,
+            end: 1,
+            u16_start: 0,
+            u16_end: 1,
+            original: original.into(),
+            suggestions: vec![],
+            priority: 1,
+            stable_hash: 99,
+            rule: rule.into(),
+            rule_dismissals: 0,
+        }
+    }
+
+    #[test]
+    fn each_card_action_is_remembered_and_then_hides_the_alert() {
+        let mut s = Settings::default();
+        let typo = alert("Spelling", "SpellCheck", " Oumu ");
+        remember(&mut s, &typo, Forget::Dismiss);
+        remember(&mut s, &alert("Spelling", "SpellCheck", "x"), Forget::Dismiss);
+        assert!(s.dismissed.contains(&99) && s.hides(&typo));
+        assert_eq!(s.rule_dismissals.get("SpellCheck"), Some(&2), "dismissals are counted per rule");
+
+        let mut s = Settings::default();
+        remember(&mut s, &typo, Forget::LearnWord);
+        assert!(s.dictionary.contains("oumu") && s.hides(&typo));
+
+        let mut s = Settings::default();
+        let style = alert("Style", "OxfordComma", "red");
+        remember(&mut s, &style, Forget::MuteRule);
+        assert!(s.muted_rules.contains("OxfordComma") && s.hides(&style));
+        assert!(!s.hides(&typo), "turning one rule off leaves the others");
+    }
+}

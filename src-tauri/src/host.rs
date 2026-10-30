@@ -170,7 +170,8 @@ impl HostState {
     /// sentences, minus everything dismissed. Word-level alerts come first so
     /// a hover over a word inside a flagged sentence opens the word's card.
     pub fn visible_alerts(&self) -> Vec<Alert> {
-        let mut v = crate::features::spotcheck::merge_visible(&self.all_alerts, &self.spot_alerts, |a| self.settings.hides(a));
+        let chat = self.doc.as_ref().is_some_and(|d| crate::casual::is_chat_app(&d.bundle_id));
+        let mut v = crate::features::spotcheck::merge_visible(&self.all_alerts, &self.spot_alerts, |a| self.settings.hides(a) || (chat && crate::casual::formal_only(&a.rule)));
         for a in &mut v {
             a.rule_dismissals = self.settings.rule_dismissals.get(&a.rule).copied().unwrap_or(0);
         }

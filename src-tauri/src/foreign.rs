@@ -11,6 +11,28 @@ fn has_foreign_letter(word: &str) -> bool {
     word.chars().any(|c| c.is_alphabetic() && !c.is_ascii())
 }
 
+/// Vietnamese syllables typed without accents that are not English words
+/// ("toi khong biet nhe"), plus common chat shorthand (ko, dc, bn).
+const PLAIN_VIETNAMESE: &[&str] = &[
+    "anh", "em", "oi", "roi", "nhe", "nha", "toi", "minh", "khong", "ko", "kh", "duoc", "dc", "chua",
+    "nhieu", "gui", "xem", "hom", "vay", "nhung", "nguoi", "biet", "muon", "thich", "cung", "dang",
+    "voi", "nhu", "thi", "vao", "lai", "giup", "nhau", "bao", "gio", "luon", "vui", "buon", "dau",
+    "ngay", "thang", "nam", "tuan", "sang", "chieu", "dem", "xong", "hay", "qua",
+    "bn", "mk", "ns", "vs", "ak", "ah", "uk", "uh", "ban", "cam", "on", "mai", "nay", "di",
+];
+/// The words above that are also everyday English: they count only next to
+/// at least two unmistakably Vietnamese ones.
+const ALSO_ENGLISH: &[&str] = &["ban", "cam", "on", "mai", "nay", "di", "hay", "qua", "ah", "uh", "vs", "dem", "nam", "em"];
+
+fn plain_vietnamese_words(words: &[&str]) -> usize {
+    let lower: Vec<String> = words.iter().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).collect();
+    let strong = lower.iter().filter(|w| PLAIN_VIETNAMESE.contains(&w.as_str()) && !ALSO_ENGLISH.contains(&w.as_str())).count();
+    if strong < 2 {
+        return strong;
+    }
+    lower.iter().filter(|w| PLAIN_VIETNAMESE.contains(&w.as_str())).count()
+}
+
 fn is_sentence_end(c: char) -> bool {
     matches!(c, '.' | '!' | '?' | '\n')
 }
@@ -22,7 +44,7 @@ fn foreign_sentences(text: &str) -> Vec<(usize, usize)> {
     let mut sentence = String::new();
     let mut flush = |start: usize, end: usize, s: &mut String| {
         let words: Vec<&str> = s.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)).collect();
-        let foreign = words.iter().filter(|w| has_foreign_letter(w)).count();
+        let foreign = words.iter().filter(|w| has_foreign_letter(w)).count() + plain_vietnamese_words(&words);
         if foreign >= 2 && foreign as f64 >= words.len() as f64 * FOREIGN_SHARE {
             out.push((start, end));
         }
@@ -74,6 +96,17 @@ mod tests {
         let teh = t[..teh].chars().count();
         assert!(!m.covers(teh, teh + 3));
         assert!(m.covers(4, 7), "nay: an ASCII word inside a Vietnamese sentence");
+    }
+
+    #[test]
+    fn vietnamese_without_accents_is_foreign_too() {
+        let t = "ok anh oi, em gui file roi nhe. The report is finished.";
+        let m = ForeignMask::new(t);
+        assert!(m.covers(3, 6), "anh");
+        let rep = t.find("report").unwrap();
+        assert!(!m.covers(rep, rep + 6));
+        let en = "I will be on the train by noon, then we can talk.";
+        assert!(!ForeignMask::new(en).covers(0, en.len()), "English with on/then is not Vietnamese");
     }
 
     #[test]

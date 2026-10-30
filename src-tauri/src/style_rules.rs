@@ -234,6 +234,70 @@ pub fn engagement(text: &str, map: &TextMap) -> Vec<Alert> {
     out
 }
 
+/// Contractions typed without the apostrophe, and the word they mean. Only
+/// forms that are never a word of their own ("ill", "wont", "id" are left out).
+pub fn contraction(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "im" => "I'm",
+        "ive" => "I've",
+        "youre" => "you're",
+        "youve" => "you've",
+        "theyre" => "they're",
+        "theyve" => "they've",
+        "thats" => "that's",
+        "whats" => "what's",
+        "isnt" => "isn't",
+        "arent" => "aren't",
+        "doesnt" => "doesn't",
+        "dont" => "don't",
+        "didnt" => "didn't",
+        "cant" => "can't",
+        "couldnt" => "couldn't",
+        "wouldnt" => "wouldn't",
+        "shouldnt" => "shouldn't",
+        "wasnt" => "wasn't",
+        "werent" => "weren't",
+        "hasnt" => "hasn't",
+        "havent" => "haven't",
+        "hadnt" => "hadn't",
+        _ => return None,
+    })
+}
+
+/// "im" → "I'm", "dont" → "don't": a missing apostrophe, with the right fix
+/// (Harper's spell checker offers "i" for "im").
+pub fn missing_apostrophes(text: &str, map: &TextMap) -> Vec<Alert> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"\b[A-Za-z]+\b").unwrap());
+    let chars = crate::engine::char_prefix(text);
+    let mut out = Vec::new();
+    for m in re.find_iter(text) {
+        let Some(fixed) = contraction(&m.as_str().to_lowercase()) else { continue };
+        // Keep the writer's capital: "Dont" → "Don't" ("I'm" always has one).
+        let fixed = if fixed.starts_with("I'") { fixed.to_string() } else { capitalised_like(fixed, m.as_str()) };
+        let (start, end) = (chars[m.start()], chars[m.end()]);
+        let stable = stable_hash("Contraction", &m.as_str().to_lowercase(), None);
+        out.push(Alert {
+            id: format!("{:x}-{}", stable, start),
+            category: Category::Correctness,
+            kind: "Contraction".into(),
+            title: "Add the apostrophe".into(),
+            message: format!("“{}” is short for two words and needs an apostrophe.", m.as_str()),
+            start,
+            end,
+            u16_start: map.char_to_utf16(start),
+            u16_end: map.char_to_utf16(end),
+            original: m.as_str().to_string(),
+            suggestions: vec![fixed],
+            priority: 50,
+            stable_hash: stable,
+            rule: "Missing apostrophe".into(),
+            rule_dismissals: 0,
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +355,13 @@ mod tests {
         assert_eq!(fixed("Actually, the plan works."), "The plan works.");
         assert!(notes("It actually works.").is_empty());
         assert_eq!(fixed("We won!!!"), "We won!");
+    }
+
+    #[test]
+    fn missing_apostrophes_get_the_right_word() {
+        let t = "im sure Dont worry, youre fine and I ill be there";
+        let got: Vec<(String, String)> = missing_apostrophes(t, &TextMap::new(t)).into_iter().map(|a| (a.original, a.suggestions[0].clone())).collect();
+        assert_eq!(got, vec![("im".into(), "I'm".into()), ("Dont".into(), "Don't".into()), ("youre".into(), "you're".into())]);
     }
 
     #[test]
