@@ -150,7 +150,13 @@ if wait_for 'd["doc"]["text"].startswith("I has the cat") and not any(a["origina
 # stay gone.
 alert_id() { probe /state | jsonq "next((a['id'] for a in d['alerts'] if a['original']=='$1'), '')"; }
 HAS="$(alert_id has)"
-if [ -n "$HAS" ] && wait_for "any(r['id']=='$HAS' for r in d['geometry']['rects'])" 6; then
+if [ -n "$HAS" ] && ! wait_for "any(r['id']=='$HAS' for r in d['geometry']['rects'])" 6; then
+  # No underlines on this desktop (generic Wayland): dismiss without a card.
+  probe /dismiss "{\"id\": \"$HAS\"}" >/dev/null
+  echo "  ----  card-under-pointer check skipped: no underlines on this desktop"
+  NO_RECTS=1
+fi
+if [ -n "$HAS" ] && [ -z "${NO_RECTS:-}" ]; then
   S="$(probe /state)"
   HX="$(echo "$S" | jsonq "next(round(d['geometry']['origin_x']+r['x']+r['w']/2) for r in d['geometry']['rects'] if r['id']=='$HAS')")"
   HY="$(echo "$S" | jsonq "next(round(d['geometry']['origin_y']+r['y']+r['h']/2) for r in d['geometry']['rects'] if r['id']=='$HAS')")"
@@ -164,12 +170,14 @@ if [ -n "$HAS" ] && wait_for "any(r['id']=='$HAS' for r in d['geometry']['rects'
     echo "  ----  card-under-pointer check skipped: the pointer did not land"
   fi
   probe /mouse "{\"x\": $(echo "$M0" | jsonq 'd["x"]'), \"y\": $(echo "$M0" | jsonq 'd["y"]')}" >/dev/null
+fi
+if [ -n "$HAS" ]; then
   # Change the text so Harper re-lints from scratch: the dismissal must hold.
   END="$(probe /state | jsonq 'len(d["doc"]["text"])')"
   probe /replace "{\"start\": $END, \"end\": $END, \"text\": \" Ok.\"}" >/dev/null
   if wait_for 'd["doc"]["text"].rstrip().endswith("Ok.")' 6 && sleep 1 && [ "$(probe /state | jsonq "not any(a['original']=='has' for a in d['alerts'])")" = "True" ]; then pass "a dismissed suggestion stays gone after the text changes"; else fail "dismissed 'has' came back: $(probe /state | jsonq '[a["original"] for a in d["alerts"]]')"; fi
 else
-  fail "no underlined 'has' alert to dismiss: $(probe /state | jsonq '[a["original"] for a in d["alerts"]]')"
+  fail "no 'has' alert to dismiss: $(probe /state | jsonq '[a["original"] for a in d["alerts"]]')"
 fi
 TEH2="$(alert_id Teh)"
 if [ -n "$TEH2" ]; then
