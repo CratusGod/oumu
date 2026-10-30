@@ -112,7 +112,7 @@ fn stronger_word(w: &str) -> Option<&'static str> {
 }
 
 fn at_sentence_start(text: &str, byte: usize) -> bool {
-    let before = text[..byte].trim_end_matches(|c: char| c == ' ' || c == '\t' || c == '"' || c == '“' || c == '(');
+    let before = text[..byte].trim_end_matches([' ', '\t', '"', '“', '(']);
     before.is_empty() || before.ends_with(['.', '!', '?', '\n'])
 }
 
@@ -311,7 +311,7 @@ mod tests {
         let map = TextMap::new(text);
         let mut out = text.to_string();
         let mut alerts = delivery(text, &map);
-        alerts.sort_by(|a, b| b.start.cmp(&a.start));
+        alerts.sort_by_key(|a| std::cmp::Reverse(a.start));
         for a in alerts {
             if let Some(s) = a.suggestions.first() {
                 let bs = out.char_indices().nth(a.start).map(|(i, _)| i).unwrap_or(out.len());
