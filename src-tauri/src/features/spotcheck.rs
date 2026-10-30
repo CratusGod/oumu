@@ -992,12 +992,12 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
             let key = cache_key(&prev_of(k), &sents[k].text);
             let earlier: Vec<&str> = sents[..k].iter().filter(|s| s.judge).map(|s| s.text.as_str()).collect();
             let doc_rest: String = sents.iter().enumerate().filter(|(j, _)| *j != k).map(|(_, s)| s.text.as_str()).collect::<Vec<_>>().join(" ");
-            // A grammar mistake comes first: fix it, and judge style once it is gone.
+            // A grammar mistake usually comes first: fix it, and judge style
+            // once it is gone. A sentence the scanner flagged (too long,
+            // wordy) keeps its rewrite instead, which is the bigger fix.
+            let mut grammar: Option<Verdict> = None;
             match by_i.get(&(n as u64 + 1)).and_then(|item| grammar_verdict(item, &sents[k].text)) {
-                Some(Ok(v)) => {
-                    candidates.push((k, 5, v));
-                    continue;
-                }
+                Some(Ok(v)) => grammar = Some(v),
                 Some(Err(r)) => {
                     out.rejected += 1;
                     out.rejections.push(format!("Grammar{r:?}: {}", sents[k].text.chars().take(50).collect::<String>()));
@@ -1028,6 +1028,14 @@ pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finishe
                 }
                 other => other,
             };
+            if let Some(g) = grammar {
+                let flagged = !hints_for(&sents[k].text, &earlier).is_empty();
+                match model_verdict {
+                    Some((c, Some(v @ Verdict::Rephrase { .. }))) if flagged => candidates.push((k, c, v)),
+                    _ => candidates.push((k, 5, g)),
+                }
+                continue;
+            }
             match model_verdict {
                 Some((c, Some(v))) => candidates.push((k, c, v)),
                 _ => {

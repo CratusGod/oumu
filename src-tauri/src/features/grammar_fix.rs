@@ -18,6 +18,58 @@ pub enum FixReject {
     OnlyCaseOrPunctuation,
     TooManyChanges,
     EditTooBig,
+    /// A word dropped that is not a doubled word ("the the").
+    DropsAWord,
+    /// A word added that is not a small function word ("to", "a", "the", ...).
+    AddsContent,
+    /// A word swapped for an unrelated one: a rewrite, not a grammar fix.
+    UnrelatedWord,
+    /// A number appears that the sentence did not have.
+    AddsANumber,
+}
+
+/// Words a grammar fix may insert on its own: a missing "to", article or helper verb.
+const INSERTABLE: &[&str] = &["to", "a", "an", "the", "of", "is", "are", "was", "were", "be", "been", "have", "has", "had", "will", "would", "it", "that", "for", "in", "on", "at"];
+
+/// Pairs that are grammar, not spelling, so they look nothing alike.
+const CONFUSABLE: &[(&str, &str)] = &[
+    ("is", "are"), ("was", "were"), ("has", "have"), ("do", "does"), ("don't", "doesn't"), ("isn't", "aren't"),
+    ("wasn't", "weren't"), ("hasn't", "haven't"), ("a", "an"), ("then", "than"), ("there", "their"),
+    ("there", "they're"), ("their", "they're"), ("your", "you're"), ("its", "it's"), ("who's", "whose"),
+    ("lose", "loose"), ("affect", "effect"), ("fewer", "less"), ("me", "i"), ("who", "whom"),
+];
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut cur = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + usize::from(a[i - 1] != b[j - 1]));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Whether `to` can be a grammar fix of `from`: another form of the same
+/// word (live/lives, give/gives, it's/its), a known confusable pair, or the
+/// same words joined by a hyphen ("three day" → "three-day").
+fn related(from: &[String], to: &[String]) -> bool {
+    let joined = |v: &[String]| v.join("-").to_lowercase();
+    if joined(from) == joined(to) {
+        return true;
+    }
+    if from.len() != to.len() {
+        return false;
+    }
+    from.iter().zip(to).all(|(a, b)| {
+        let (a, b) = (a.to_lowercase(), b.to_lowercase());
+        let stem = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+        CONFUSABLE.iter().any(|&(x, y)| (a == x && b == y) || (a == y && b == x))
+            || (stem >= 3 && edit_distance(&a, &b) <= 3)
+            || (stem >= 2 && edit_distance(&a, &b) <= 1)
+    })
 }
 
 /// One change: original words `from..to` (token indexes) become `with`.
@@ -132,6 +184,30 @@ pub fn check(orig: &str, fixed: &str) -> Result<Vec<Edit>, FixReject> {
     if edits.iter().any(|e| e.to - e.from > MAX_EDIT_WORDS || e.with.len() > (e.to - e.from) + 1) {
         return Err(FixReject::EditTooBig);
     }
+    let has_digit = |w: &str| w.chars().any(|c| c.is_ascii_digit());
+    for e in &edits {
+        let was: Vec<String> = a[e.from..e.to].iter().map(|t| t.core.clone()).collect();
+        if e.with.iter().any(|w| has_digit(w)) && !was.iter().any(|w| has_digit(w)) {
+            return Err(FixReject::AddsANumber);
+        }
+        if e.with.is_empty() {
+            // Only a doubled word may go: "the the cat".
+            let doubled = was.len() == 1 && [e.from.checked_sub(1), Some(e.to)].into_iter().flatten().any(|i| a.get(i).is_some_and(|t| t.core.eq_ignore_ascii_case(&was[0])));
+            if !doubled {
+                return Err(FixReject::DropsAWord);
+            }
+        } else if was.is_empty() {
+            if !e.with.iter().all(|w| INSERTABLE.contains(&w.to_lowercase().as_str())) {
+                return Err(FixReject::AddsContent);
+            }
+        } else {
+            // A replacement may also carry one inserted function word: "go" → "to go".
+            let core: Vec<String> = if e.with.len() == was.len() + 1 && INSERTABLE.contains(&e.with[0].to_lowercase().as_str()) { e.with[1..].to_vec() } else { e.with.clone() };
+            if !related(&was, &core) {
+                return Err(FixReject::UnrelatedWord);
+            }
+        }
+    }
     Ok(edits)
 }
 
@@ -202,6 +278,17 @@ mod tests {
     #[test]
     fn a_missing_word_is_anchored_on_its_neighbour() {
         assert_eq!(applied("I want go home now.", "I want to go home now."), vec![("go".into(), "to go".into())]);
+    }
+
+    #[test]
+    fn content_changes_dressed_as_grammar_are_refused() {
+        assert_eq!(check("We met on the first of March in Hanoi.", "We met on March in Hanoi."), Err(FixReject::DropsAWord));
+        assert_eq!(check("The launch moved to March and the team agreed.", "The launch moved to March 1 and the team agreed."), Err(FixReject::AddsANumber));
+        assert_eq!(check("It asked for budgets and plans to announce a winner.", "It asked for budgets. They plan to announce a winner."), Err(FixReject::UnrelatedWord));
+        assert_eq!(check("We shipped it yesterday morning.", "We shipped it early yesterday morning."), Err(FixReject::AddsContent));
+        assert!(check("I saw the the cat.", "I saw the cat.").is_ok(), "a doubled word may go");
+        assert!(check("Their going home then.", "They're going home then.").is_ok());
+        assert!(check("I has a cat.", "I have a cat.").is_ok());
     }
 
     #[test]

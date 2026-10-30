@@ -8,7 +8,11 @@ except Exception:
     print(json.dumps({"hits": 0, "checks": 1, "notes": ["no JSON answer: " + raw[:120]], "detail": "", "ms": None, "checked": None, "sentences": None, "batches": None, "rejections": []}))
     sys.exit(0)
 text = c["text"]
-alerts = d.get("alerts", [])
+# Grammar fixes (SpotGrammar, Correctness) are word-sized edits scored on their
+# own; the clarity expectations below look at rewrites and removals only.
+everything = d.get("alerts", [])
+grammar = [a for a in everything if a["kind"] == "SpotGrammar"]
+alerts = [a for a in everything if a["kind"] != "SpotGrammar"]
 u16 = text.encode("utf-16-le")
 def sl(a, b): return u16[a * 2:b * 2].decode("utf-16-le")
 def action(a): return "remove" if a["suggestions"] and a["suggestions"][0] == "" else "rephrase"
@@ -39,6 +43,17 @@ if c.get("no_remove"):
     if not rem: hits += 1
     else: notes.append("removed: " + "; ".join(a["original"][:30] for a in rem))
 bad = []
+for g in grammar:
+    if g["category"] != "correctness": bad.append("grammar category:" + g["category"])
+    if sl(g["u16_start"], g["u16_end"]) != g["original"]: bad.append("offsets:" + g["original"][:20])
+    sug = g["suggestions"][0] if g["suggestions"] else ""
+    if not sug or len(sug.split()) > len(g["original"].split()) + 1: bad.append("grammar edit too big:" + g["original"][:20])
+    if re.search(r"\d", sug) and not re.search(r"\d", g["original"]): bad.append("grammar added a number:" + sug[:20])
+# Clean, casual or quoted prose that expects no edits must get no grammar edits either.
+if c.get("max_actions") == 0:
+    checks += 1
+    if not grammar: hits += 1
+    else: notes.append("grammar on clean text: " + "; ".join(f"{g['original']}->{g['suggestions'][0]}" for g in grammar))
 for a in alerts:
     if sl(a["u16_start"], a["u16_end"]) != a["original"]: bad.append("offsets:" + a["original"][:20])
     if a["category"] != "clarity" or not a["kind"].startswith("Spot"): bad.append("kind:" + a["kind"])
@@ -48,5 +63,5 @@ for a in alerts:
 checks += 1
 if not bad: hits += 1
 else: notes.append("invariants: " + ", ".join(bad))
-detail = " | ".join(f"{action(a)} '{a['original'][:28]}…'" + (f" -> '{a['suggestions'][0][:40]}…'" if action(a) == "rephrase" else "") for a in alerts)
+detail = " | ".join([f"grammar '{g['original']}' -> '{g['suggestions'][0]}'" for g in grammar] + [f"{action(a)} '{a['original'][:28]}…'" + (f" -> '{a['suggestions'][0][:40]}…'" if action(a) == "rephrase" else "") for a in alerts])
 print(json.dumps({"hits": hits, "checks": checks, "notes": notes, "detail": detail, "ms": d.get("ms"), "checked": d.get("checked"), "sentences": d.get("sentences"), "batches": d.get("batches"), "rejections": d.get("rejections", [])}))
