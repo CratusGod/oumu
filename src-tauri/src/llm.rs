@@ -547,25 +547,42 @@ async fn gemini_run<F: FnMut(&str)>(cfg: &LlmConfig, body: &Value, on_delta: &mu
 
 async fn gemini_read<F: FnMut(&str)>(mut s: ByteStream, first: Vec<u8>, on_delta: &mut F) -> Result<String> {
     let mut full = String::new();
-    let mut buf = String::from_utf8_lossy(&first).into_owned();
+    // Bytes, not text: a character split across two network chunks must be
+    // decoded whole, or the answer gets replacement characters.
+    let mut buf: Vec<u8> = first;
+    let mut finish: Option<String> = None;
+    let mut ended = false;
     loop {
-        while let Some(pos) = buf.find('\n') {
-            let line = buf[..pos].trim().to_string();
-            buf.drain(..=pos);
-            if let Some(v) = line.strip_prefix("data:").and_then(|d| serde_json::from_str::<Value>(d.trim()).ok()) {
+        // At the end of the stream the last event may have no newline after it.
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n').or_else(|| (ended && !buf.is_empty()).then(|| buf.len() - 1)) {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line);
+            if let Some(v) = line.trim().strip_prefix("data:").and_then(|d| serde_json::from_str::<Value>(d.trim()).ok()) {
                 let t = gemini_text(&v);
                 if !t.is_empty() {
                     full.push_str(&t);
                     on_delta(&t);
                 }
+                if let Some(f) = v["candidates"][0]["finishReason"].as_str() {
+                    finish = Some(f.to_string());
+                }
             }
         }
+        if ended {
+            break;
+        }
         match s.next().await {
-            Some(chunk) => buf.push_str(&String::from_utf8_lossy(&chunk?)),
-            None => break,
+            Some(chunk) => buf.extend_from_slice(&chunk?),
+            None => ended = true,
         }
     }
-    Ok(full)
+    match finish.as_deref() {
+        Some("STOP") => Ok(full),
+        // Google ended the answer early (RECITATION, SAFETY, MAX_TOKENS, ...)
+        // or the stream closed without saying it was done: the text is cut off.
+        Some(other) => Err(anyhow!("Gemini stopped the answer early ({other}) after {} characters", full.len())),
+        None => Err(anyhow!("Gemini's answer was cut off after {} characters", full.len())),
+    }
 }
 
 async fn gemini_complete(cfg: &LlmConfig, system: &str, messages: &[Message], json: bool, temperature: f32) -> Result<String> {
@@ -782,4 +799,23 @@ mod tests {
         assert_eq!(openai_url(&c), "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
         assert_eq!(openai_endpoint("https://openrouter.ai/api/v1/", "models"), "https://openrouter.ai/api/v1/models");
     }
+
+    fn sse(chunks: &[&[u8]]) -> ByteStream {
+        let items: Vec<reqwest::Result<Vec<u8>>> = chunks.iter().map(|c| Ok(c.to_vec())).collect();
+        Box::pin(futures_util::stream::iter(items))
+    }
+
+    #[test]
+    fn a_gemini_stream_is_read_whole_even_without_a_final_newline() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let a = br#"data: {"candidates":[{"content":{"parts":[{"text":"caf"}]}}]}"#;
+        // "é" split across two network chunks, and a last event with no newline.
+        let b: &[u8] = b"\r\n\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\xc3";
+        let c: &[u8] = b"\xa9 ok\"}]},\"finishReason\":\"STOP\"}]}";
+        let out = rt.block_on(gemini_read(sse(&[b, c]), a.to_vec(), &mut |_| {})).unwrap();
+        assert_eq!(out, "caf\u{e9} ok");
+        let cut = rt.block_on(gemini_read(sse(&[]), a.to_vec(), &mut |_| {}));
+        assert!(cut.is_err(), "no finish reason: the answer is cut off");
+    }
+
 }

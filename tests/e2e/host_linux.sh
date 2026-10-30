@@ -8,7 +8,7 @@
 # TARGET=qt uses tests/e2e/fixtures/qt_textedit.py (PySide6).
 # TARGET=chromium / firefox open a textarea in a throwaway browser profile.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-FIXTURE="I has teh cat and I think that we should just ship it. Teh end."
+FIXTURE="I has teh cat and I think that we should just ship it. Teh end. My zorbleflax works."
 TARGET="${TARGET:-gtk3}"
 WORK="$(mktemp -d)"
 MIRROR="$WORK/mirror.txt"
@@ -47,6 +47,8 @@ start_app
 if [ "$(probe /health | jsonq 'd["trusted"]')" != "True" ]; then
   [ "${E2E_ENABLE_A11Y:-0}" = 1 ] && probe /trust >/dev/null
 fi
+# A saved consent switches the bus back on a moment after launch.
+for _ in $(seq 1 20); do [ "$(probe /health | jsonq 'd["trusted"]')" = "True" ] && break; sleep 0.25; done
 if [ "$(probe /health | jsonq 'd["trusted"]')" = "True" ]; then pass "accessibility bus is on"; else fail "accessibility bus is off (click 'Turn on accessibility' in the panel, or rerun with E2E_ENABLE_A11Y=1)"; summary; exit 1; fi
 if wait_for 'set(d["ui_ready"]) >= {"panel","oumubutton","underlines","tab"}' 15; then pass "panel, Oumu button, underline and edge-tab webviews mounted"; else fail "webviews not mounted: $(probe /state | jsonq 'd["ui_ready"]')"; fi
 
@@ -141,5 +143,48 @@ if [ "$(echo "$R" | jsonq '"the cat" in d.get("new_text","")')" = "True" ]; then
 sleep 0.5
 if [ -z "$MIRROR" ] || [ "$TARGET" = gtk4 ] || grep -q "I has the cat" "$MIRROR" 2>/dev/null; then pass "the app's own buffer shows 'the cat'"; else fail "app buffer: $(head -c 80 "$MIRROR")"; fi
 if wait_for 'd["doc"]["text"].startswith("I has the cat") and not any(a["original"]=="teh" for a in d["alerts"])' 6; then pass "re-read after the edit; the 'teh' alert is gone"; else fail "after accept: $(probe /state | jsonq 'd["doc"]["text"][:30]')"; fi
+
+
+# Cards and learning: dismiss under the pointer (the card must close, not
+# linger), dismissals survive a re-lint, a rule turned off and a learned word
+# stay gone.
+alert_id() { probe /state | jsonq "next((a['id'] for a in d['alerts'] if a['original']=='$1'), '')"; }
+HAS="$(alert_id has)"
+if [ -n "$HAS" ] && wait_for "any(r['id']=='$HAS' for r in d['geometry']['rects'])" 6; then
+  S="$(probe /state)"
+  HX="$(echo "$S" | jsonq "next(round(d['geometry']['origin_x']+r['x']+r['w']/2) for r in d['geometry']['rects'] if r['id']=='$HAS')")"
+  HY="$(echo "$S" | jsonq "next(round(d['geometry']['origin_y']+r['y']+r['h']/2) for r in d['geometry']['rects'] if r['id']=='$HAS')")"
+  M0="$(probe /mouse)"
+  probe /mouse "{\"x\": $HX, \"y\": $HY}" >/dev/null; sleep 0.4
+  if [ "$(probe /mouse | jsonq "abs(d['x']-$HX)<3 and abs(d['y']-$HY)<3")" = "True" ] && wait_for 'len(d["card_rects"]) > 0' 3; then
+    probe /dismiss "{\"id\": \"$HAS\"}" >/dev/null
+    if wait_for "len(d['card_rects']) == 0 and not any(a['original']=='has' for a in d['alerts'])" 4; then pass "dismiss under the pointer closes the card and drops its rect"; else fail "card lingers after dismiss: card_rects=$(probe /state | jsonq 'd["card_rects"]')"; fi
+  else
+    probe /dismiss "{\"id\": \"$HAS\"}" >/dev/null
+    echo "  ----  card-under-pointer check skipped: the pointer did not land"
+  fi
+  probe /mouse "{\"x\": $(echo "$M0" | jsonq 'd["x"]'), \"y\": $(echo "$M0" | jsonq 'd["y"]')}" >/dev/null
+  # Change the text so Harper re-lints from scratch: the dismissal must hold.
+  END="$(probe /state | jsonq 'len(d["doc"]["text"])')"
+  probe /replace "{\"start\": $END, \"end\": $END, \"text\": \" Ok.\"}" >/dev/null
+  if wait_for 'd["doc"]["text"].rstrip().endswith("Ok.")' 6 && sleep 1 && [ "$(probe /state | jsonq "not any(a['original']=='has' for a in d['alerts'])")" = "True" ]; then pass "a dismissed suggestion stays gone after the text changes"; else fail "dismissed 'has' came back: $(probe /state | jsonq '[a["original"] for a in d["alerts"]]')"; fi
+else
+  fail "no underlined 'has' alert to dismiss: $(probe /state | jsonq '[a["original"] for a in d["alerts"]]')"
+fi
+TEH2="$(alert_id Teh)"
+if [ -n "$TEH2" ]; then
+  RULE="$(probe /state | jsonq "next(a['rule'] for a in d['alerts'] if a['id']=='$TEH2')")"
+  probe /mute "{\"id\": \"$TEH2\"}" >/dev/null
+  if wait_for "not any(a['rule']=='$RULE' for a in d['alerts'])" 4; then pass "turning off a rule ($RULE) hides its notes"; else fail "rule $RULE still shows"; fi
+else
+  fail "no 'Teh' alert to turn its rule off"
+fi
+ZORB="$(alert_id zorbleflax)"
+if [ -n "$ZORB" ]; then
+  probe /learn "{\"id\": \"$ZORB\"}" >/dev/null
+  if wait_for "not any(a['original']=='zorbleflax' for a in d['alerts'])" 4; then pass "a word added to the dictionary is no longer flagged"; else fail "zorbleflax still flagged"; fi
+else
+  fail "Harper did not flag 'zorbleflax': $(probe /state | jsonq '[a["original"] for a in d["alerts"]]')"
+fi
 
 summary
