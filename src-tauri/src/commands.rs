@@ -200,7 +200,7 @@ async fn spot_check_inner(app: &AppHandle, shared: &Shared, cfg: Option<&LlmConf
     if let Some(t) = args["text"].as_str().filter(|t| !t.trim().is_empty()) {
         let mut cache = features::spotcheck::Cache::new();
         let started = std::time::Instant::now();
-        let o = features::spotcheck::run(cfg, t, &mut cache).await.map_err(err)?;
+        let o = features::spotcheck::run(cfg, t, &mut cache, false).await.map_err(err)?;
         let mut v = serde_json::to_value(o).unwrap();
         v["ms"] = json!(started.elapsed().as_millis() as u64);
         return Ok(v);
@@ -221,7 +221,9 @@ async fn spot_check_inner(app: &AppHandle, shared: &Shared, cfg: Option<&LlmConf
         }
     };
     let started = std::time::Instant::now();
-    let result = features::spotcheck::run(cfg, &text, &mut cache).await;
+    let auto = args["auto"].as_bool().unwrap_or(false);
+    let result = features::spotcheck::run(cfg, &text, &mut cache, auto).await;
+    features::spotcheck::save_cache(&cache);
     let mut st = shared.lock().unwrap();
     st.spot_running = false;
     st.spot_cache = cache;
@@ -251,9 +253,22 @@ async fn spot_check_inner(app: &AppHandle, shared: &Shared, cfg: Option<&LlmConf
 /// Host-driven spot check: the host loop calls this once typing pauses, for
 /// any panel view (or a tucked panel). Errors go to the log, not the user.
 pub async fn spot_check_auto(app: AppHandle, shared: Shared, cfg: LlmConfig) {
-    if let Err(e) = spot_check_inner(&app, &shared, Some(&cfg), &json!({})).await {
+    if let Err(e) = spot_check_inner(&app, &shared, Some(&cfg), &json!({"auto": true})).await {
         log::warn!("auto spot check: {e}");
+        if out_of_quota(&e) {
+            // Every model said no: stop spending pauses on refusals until
+            // the quota has had time to come back. Manual checks still run.
+            shared.lock().unwrap().spot_paused_until = Some(std::time::Instant::now() + SPOT_QUOTA_PAUSE);
+        }
     }
+}
+
+/// How long automatic checks rest after the key ran out of quota.
+const SPOT_QUOTA_PAUSE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+fn out_of_quota(e: &str) -> bool {
+    let e = e.to_lowercase();
+    e.contains("429") || e.contains("quota") || e.contains("resource_exhausted") || e.contains("rate limit")
 }
 
 pub async fn run_feature_inner(app: &AppHandle, shared: &Shared, name: &str, args: Value) -> Result<Value, String> {

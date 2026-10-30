@@ -143,6 +143,8 @@ pub struct HostState {
     pub spot_doc_id: String,
     pub spot_dirty: bool,
     pub spot_pending_since: Option<Instant>,
+    /// Automatic spot checks wait until then (the key ran out of quota).
+    pub spot_paused_until: Option<Instant>,
     /// Text hash the last automatic spot check was started for.
     pub spot_last_hash: u64,
     pub status: Status,
@@ -579,7 +581,8 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
     // view and for a tucked panel; the result arrives as host://alerts.
     {
         let mut st = shared.lock().unwrap();
-        if st.settings.auto_spot_check && st.spot_dirty && !st.lint_dirty && !st.spot_running && st.spot_pending_since.map(|t| t.elapsed() >= SPOT_DEBOUNCE).unwrap_or(false) {
+        let paused = st.spot_paused_until.is_some_and(|t| Instant::now() < t);
+        if st.settings.auto_spot_check && !paused && st.spot_dirty && !st.lint_dirty && !st.spot_running && st.spot_pending_since.map(|t| t.elapsed() >= SPOT_DEBOUNCE).unwrap_or(false) {
             if let Some(d) = st.doc.as_ref().filter(|d| d.active) {
                 let words = score::word_count(&d.text);
                 let hash = st.last_text_hash;

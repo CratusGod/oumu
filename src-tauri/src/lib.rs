@@ -14,6 +14,7 @@ pub mod commands;
 pub mod debug_server;
 pub mod engine;
 pub mod features;
+pub mod foreign;
 pub mod history;
 pub mod host;
 pub mod llm;
@@ -22,6 +23,7 @@ pub mod overlay;
 pub mod pace;
 pub mod score;
 pub mod settings;
+pub mod style_rules;
 pub mod textmap;
 pub mod theme;
 pub mod wm;
@@ -58,6 +60,7 @@ pub fn run() {
 
     let mut state = host::HostState::default();
     state.settings = settings::load();
+    state.spot_cache = features::spotcheck::load_cache();
     state.history = history::load();
     let shared: host::Shared = Arc::new(Mutex::new(state));
     let dock_side = shared.lock().unwrap().settings.dock_side.clone();

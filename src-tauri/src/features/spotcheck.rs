@@ -362,6 +362,31 @@ pub fn hints_for(s: &str, earlier: &[&str]) -> Vec<String> {
     out
 }
 
+fn hold_back_unfinished(sents: &mut [Sentence]) {
+    if let Some(last) = sents.iter_mut().rev().find(|s| s.judge) {
+        let finished = last.text.trim_end().chars().last().is_some_and(|c| is_terminal(c) || is_closing(c));
+        if !finished {
+            last.judge = false;
+        }
+    }
+}
+
+fn cache_path() -> std::path::PathBuf {
+    crate::settings::support_dir().join("spot-cache.json")
+}
+
+/// Verdicts from earlier runs, so reopening a document (or restarting Oumu)
+/// does not ask the model about the same sentences again.
+pub fn load_cache() -> Cache {
+    std::fs::read_to_string(cache_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+pub fn save_cache(cache: &Cache) {
+    if let Ok(j) = serde_json::to_string(cache) {
+        let _ = std::fs::write(cache_path(), j);
+    }
+}
+
 // ---------------------------------------------------------------- batching
 
 pub fn batches(sents: &[Sentence]) -> Vec<Vec<usize>> {
@@ -906,8 +931,14 @@ fn plain_verdict(orig: &str, earlier: &[&str], doc_rest: &str) -> Option<Verdict
 
 /// Spot-check `text`. Sentences already in `cache` are not sent to the model.
 /// With no model (`None`) only the deterministic wordy-phrase rewrites run.
-pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache) -> anyhow::Result<Outcome> {
-    let sents = split_sentences(text);
+/// `finished_only`: leave out a last sentence that has no end punctuation
+/// yet. The automatic check runs on a typing pause, and judging a sentence
+/// that is still being written spends a request on words about to change.
+pub async fn run(cfg: Option<&LlmConfig>, text: &str, cache: &mut Cache, finished_only: bool) -> anyhow::Result<Outcome> {
+    let mut sents = split_sentences(text);
+    if finished_only {
+        hold_back_unfinished(&mut sents);
+    }
     let map = TextMap::new(text);
     let mut out = Outcome { sentences: sents.iter().filter(|s| s.judge).count(), skipped: sents.iter().filter(|s| !s.judge).count(), ..Default::default() };
     let mut verdicts: HashMap<usize, Verdict> = HashMap::new();
@@ -1249,6 +1280,26 @@ mod tests {
     }
 
     #[test]
+    fn an_unfinished_last_sentence_waits_for_its_full_stop() {
+        let mut s = split_sentences("The first sentence is complete and long enough. The second one is still being typed and has no");
+        assert!(s.iter().filter(|x| x.judge).count() == 2);
+        hold_back_unfinished(&mut s);
+        assert_eq!(s.iter().filter(|x| x.judge).map(|x| x.text.as_str()).collect::<Vec<_>>(), vec!["The first sentence is complete and long enough."]);
+        let mut done = split_sentences("This sentence is finished and long enough to judge.");
+        hold_back_unfinished(&mut done);
+        assert!(done[0].judge);
+    }
+
+    #[test]
+    fn the_cache_survives_a_round_trip_through_json() {
+        let mut c = Cache::new();
+        c.insert(42, None);
+        c.insert(7, Some(Verdict::Remove { why: "repeat".into(), flags: vec![] }));
+        let back: Cache = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
     fn merge_hides_harpers_long_sentence_note_under_a_spot_rewrite() {
         let harper = vec![mk_alert("Readability", 10, 60, 1), mk_alert("Readability", 100, 150, 2), mk_alert("Spelling", 12, 14, 3)];
         let spot = vec![mk_alert("SpotRephrase", 10, 60, 4)];
@@ -1273,7 +1324,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut cache = Cache::new();
         let t0 = std::time::Instant::now();
-        let o = rt.block_on(run(Some(&cfg), &text, &mut cache)).expect("spot check");
+        let o = rt.block_on(run(Some(&cfg), &text, &mut cache, false)).expect("spot check");
         println!("LIVE sentences={} checked={} batches={} rejected={} ms={}", o.sentences, o.checked, o.batches, o.rejected, t0.elapsed().as_millis());
         let mut j = serde_json::to_value(&o).unwrap();
         j["ms"] = serde_json::json!(t0.elapsed().as_millis() as u64);
@@ -1301,13 +1352,13 @@ mod tests {
     async fn run_without_a_model_still_rewrites_hinted_sentences() {
         let text = "We shipped it on Friday. In the event that you are unable to attend, please notify your manager. Thanks.";
         let mut cache = Cache::new();
-        let o = run(None, text, &mut cache).await.unwrap();
+        let o = run(None, text, &mut cache, false).await.unwrap();
         assert_eq!(o.batches, 0);
         assert_eq!(o.alerts.len(), 1, "{:?}", o.alerts);
         assert_eq!(o.alerts[0].suggestions[0], "If you are unable to attend, please notify your manager.");
         assert_eq!(o.alerts[0].title, "Make it more concise");
         // cached: a second run asks nothing and finds the same thing
-        let o2 = run(None, text, &mut cache).await.unwrap();
+        let o2 = run(None, text, &mut cache, false).await.unwrap();
         assert_eq!(o2.alerts.len(), 1);
         assert_eq!(o2.from_cache, 2);
     }
