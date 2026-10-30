@@ -176,6 +176,7 @@ pub fn run() {
             commands::ui_ready,
             commands::ui_log,
             commands::probe_key,
+            commands::local_models,
             commands::probe_searxng,
         ])
         .run(tauri::generate_context!())

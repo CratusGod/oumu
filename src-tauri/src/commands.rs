@@ -169,7 +169,7 @@ fn resolve_text(shared: &Shared, args: &Value) -> Result<(String, String, bool),
 
 /// The model configuration a feature actually calls.
 pub fn effective_llm(settings: &Settings) -> Result<LlmConfig, String> {
-    const NO_KEY: &str = "No AI set up yet. Open Settings → AI and paste a key (Gemini, OpenAI, Anthropic, OpenRouter or Groq).";
+    const NO_KEY: &str = "No AI set up yet. Open Settings → AI and paste a key (Gemini, OpenAI, Anthropic, OpenRouter or Groq), or pick a local model.";
     match settings.llm.provider {
         Provider::None => Err(NO_KEY.into()),
         Provider::Ollama => Ok(settings.llm.clone()),
@@ -709,20 +709,28 @@ fn keep_working_gemini(shared: &Shared) {
     }
 }
 
-/// Is a local Ollama running, and which model would the e2e rig use? Debug
-/// probe only (`/ollama`): the product offers no local model.
-pub async fn detect_ollama_inner() -> Value {
-    let base = "http://127.0.0.1:11434";
-    let models = llm::ollama_models(base).await.unwrap_or_default();
-    let prefs = ["qwen2.5:7b", "qwen3:8b", "llama3.1:8b", "gemma3:4b", "qwen2.5:3b", "mistral:7b"];
+/// The local Ollama at `base`: is it running, its chat models, and the one to
+/// suggest (a known good writer if present, else the first chat model).
+pub async fn detect_ollama_inner(base: &str) -> Value {
+    let models: Vec<String> = llm::ollama_models(base).await.unwrap_or_default();
+    let chat: Vec<&String> = models.iter().filter(|m| !m.contains("embed")).collect();
+    let prefs = ["qwen3.5:9b", "qwen3:8b", "qwen2.5:7b", "llama3.1:8b", "gemma3:12b", "gemma3:4b", "mistral:7b"];
     let pick = prefs
         .iter()
-        .find(|p| models.iter().any(|m| m == *p))
+        .find(|p| chat.iter().any(|m| m == *p))
         .map(|s| s.to_string())
-        .or_else(|| models.iter().find(|m| !m.contains("embed") && !m.contains("smollm")).cloned())
-        .or_else(|| models.first().cloned());
-    json!({"running": !models.is_empty(), "base_url": base, "models": models, "pick": pick})
+        .or_else(|| chat.first().map(|m| m.to_string()));
+    json!({"running": !models.is_empty(), "base_url": base, "models": chat, "pick": pick})
 }
+
+/// Settings → AI → Local model: what the local Ollama offers.
+#[tauri::command]
+pub async fn local_models(base_url: Option<String>) -> Value {
+    let base = base_url.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| OLLAMA_BASE.into());
+    detect_ollama_inner(base.trim_end_matches('/')).await
+}
+
+pub const OLLAMA_BASE: &str = "http://127.0.0.1:11434";
 
 #[tauri::command]
 pub async fn probe_key(key: String) -> Result<Value, String> {

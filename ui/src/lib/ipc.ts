@@ -1,6 +1,6 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppState, KeyProbe, MatugenStatus, Settings, Session } from "./types";
+import type { AppState, KeyProbe, LocalModels, MatugenStatus, Settings, Session } from "./types";
 
 // Outside Tauri (a plain browser, used for layout screenshots and tests) the
 // commands answer from a fixture instead of the host.
@@ -35,6 +35,7 @@ export const ipc = {
   setCardRects: (rects: { x: number; y: number; w: number; h: number }[]) => invoke<void>("set_card_rects", { rects }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   probeKey: (key: string) => invoke<KeyProbe>("probe_key", { key }),
+  localModels: (baseUrl?: string) => invoke<LocalModels>("local_models", { baseUrl: baseUrl ?? null }),
   probeSearxng: (url: string) => invoke<number>("probe_searxng", { url }),
   quit: () => invoke<void>("quit_app"),
 };

@@ -129,6 +129,8 @@ async fn ollama_complete(cfg: &LlmConfig, system: &str, messages: &[Message], js
         "model": cfg.model,
         "messages": with_system(system, messages),
         "stream": false,
+        // Thinking models (qwen3.5) would spend most of a check reasoning first.
+        "think": false,
         "options": {"temperature": temperature, "num_ctx": 8192},
     });
     if json {
@@ -148,6 +150,7 @@ async fn ollama_stream<F: FnMut(&str)>(cfg: &LlmConfig, system: &str, messages: 
         "model": cfg.model,
         "messages": with_system(system, messages),
         "stream": true,
+        "think": false,
         "options": {"temperature": temperature, "num_ctx": 8192},
     });
     let res = client()?.post(format!("{}/api/chat", base(cfg))).json(&body).send().await.context("Ollama is not reachable")?;

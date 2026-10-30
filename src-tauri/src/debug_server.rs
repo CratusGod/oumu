@@ -145,7 +145,7 @@ fn handle(app: &AppHandle, shared: &Shared, path: &str, args: Value) -> Result<V
             let key = args["key"].as_str().unwrap_or("").to_string();
             tauri::async_runtime::block_on(async move { crate::commands::probe_key_inner(&key).await })
         }
-        "/ollama" => Ok(tauri::async_runtime::block_on(crate::commands::detect_ollama_inner())),
+        "/ollama" => Ok(tauri::async_runtime::block_on(crate::commands::detect_ollama_inner(crate::commands::OLLAMA_BASE))),
         "/lint" => {
             let text = args["text"].as_str().ok_or("text required")?.to_string();
             let alerts = std::panic::catch_unwind(|| crate::engine::Engine::new().check(&text)).map_err(|_| "engine panicked".to_string())?;

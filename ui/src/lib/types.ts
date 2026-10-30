@@ -28,7 +28,7 @@ export interface Score {
 export interface Voice { id: string; name: string; description: string; custom: boolean }
 export interface Audience { id: string; name: string; description: string; custom: boolean }
 
-/** "ollama" is set only by the e2e rig through the debug probe; the UI offers no local model. */
+/** "ollama" is the optional local model (Settings → AI → Local model). */
 export type ProviderId = "none" | "ollama" | "openai" | "anthropic" | "gemini";
 export interface LlmConfig { provider: ProviderId; base_url: string; api_key: string; model: string }
 
@@ -54,3 +54,5 @@ export type View =
 
 export interface UnderlineRect { id: string; x: number; y: number; w: number; h: number; color: string; category: string; sentence: boolean }
 export interface Geometry { origin_x: number; origin_y: number; width: number; height: number; rects: UnderlineRect[]; hovered: string | null; over_card: boolean; }
+
+export interface LocalModels { running: boolean; base_url: string; models: string[]; pick: string | null }

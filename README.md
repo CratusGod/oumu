@@ -11,6 +11,9 @@ Arch desktop, and on Hyprland it gets in-place overlays everywhere.
   [AI Studio](https://aistudio.google.com/apikey)), OpenAI, Anthropic, OpenRouter or Groq. Paste it
   and the provider and model are picked for you. A busy or retired Gemini model hands over to the
   next one automatically.
+* **Local model (optional):** run the AI tools on your own computer with
+  [Ollama](https://ollama.com) instead: no key and no daily limit, but slower, and the model needs
+  a few GB of disk and GPU memory. Settings → AI → Local model finds it and lists your models.
 * **Translate anything:** text field contents, or text highlighted in any app (a web page, a PDF, a
   chat). Trigger it from a keybind, a DragShift slice, or a right-click item in Zen/Firefox.
 * **Plagiarism check** needs no key. Optionally point it at your own SearXNG or a Brave Search key

@@ -217,18 +217,7 @@ pub fn load() -> Settings {
         Err(_) => Settings::default(),
     };
     migrate_user_name(&mut s);
-    migrate_local_model(&mut s);
     s
-}
-
-/// Oumu stopped offering a local model on Oct 18 2026. A settings file from an
-/// older build may still name Ollama; it loads as "nothing set up", which says
-/// how to paste a key. The e2e rig sets Ollama back through the debug probe
-/// (`/settings`), which does not pass through here.
-fn migrate_local_model(s: &mut Settings) {
-    if s.llm.provider == Provider::Ollama {
-        s.llm = LlmConfig::default();
-    }
 }
 
 /// Older builds saved the capitalized login name ("Alexexample") because they
@@ -357,16 +346,11 @@ mod tests {
     }
 
     #[test]
-    fn a_local_model_setting_migrates_to_nothing_set_up() {
-        let mut s = Settings::default();
-        assert_eq!(s.llm.provider, Provider::None, "no model by default");
-        s.llm = LlmConfig { provider: Provider::Ollama, base_url: "http://127.0.0.1:11434".into(), api_key: String::new(), model: "qwen2.5:7b".into() };
-        migrate_local_model(&mut s);
-        assert_eq!(s.llm.provider, Provider::None);
-        let mut own = Settings::default();
-        own.llm = LlmConfig { provider: Provider::OpenAI, base_url: "https://api.openai.com".into(), api_key: "sk-x".into(), model: "gpt-4o-mini".into() };
-        migrate_local_model(&mut own);
-        assert_eq!(own.llm.provider, Provider::OpenAI, "an own key is left alone");
+    fn a_local_model_setting_survives_loading() {
+        let file = r#"{"llm":{"provider":"ollama","base_url":"http://127.0.0.1:11434","api_key":"","model":"qwen3.5:9b"}}"#;
+        let s: Settings = serde_json::from_str(file).unwrap();
+        assert_eq!(s.llm.provider, Provider::Ollama);
+        assert_eq!(s.llm.model, "qwen3.5:9b");
     }
 
     #[test]
