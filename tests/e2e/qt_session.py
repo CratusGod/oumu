@@ -24,7 +24,8 @@ if sys.argv[1] == "stop":
 try:
     probe("/health", timeout=1)
 except Exception:
-    subprocess.Popen([str(ROOT / "src-tauri/target/debug/oumu.exe")], env=dict(os.environ, OUMU_DEBUG_PORT=str(PORT)),
+    exe = os.environ.get("OUMU_EXE") or str(ROOT / "src-tauri/target/debug/oumu.exe")  # e.g. the release build
+    subprocess.Popen([exe], env=dict(os.environ, OUMU_DEBUG_PORT=str(PORT)),
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
     wait_for("Oumu", lambda: probe("/health").get("trusted"))
 pyw = Path(sys.executable).with_name("pythonw.exe")

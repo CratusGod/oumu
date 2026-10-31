@@ -9,6 +9,9 @@ import { relativeTime, ruleName } from "../../lib/text";
 import type { Settings } from "../../lib/types";
 import { AiSetup } from "./AiSetup";
 
+/** WebView2 (Windows) reports "Windows" in its user agent; UI Automation needs no permission there. */
+const IS_WINDOWS = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
 export function History({ ctx }: { ctx: Ctx }) {
   return (
     <>
@@ -70,7 +73,7 @@ export function SettingsView({ ctx }: { ctx: Ctx }) {
         <div className="section-label">Plagiarism search</div>
         <SearchSettings s={s} setS={setS} save={save} />
         <div className="section-label">App</div>
-        <div className="row-actions"><button className="btn btn--outline" onClick={() => ipc.permissionPrompt()}>Accessibility permission</button><button className="btn btn--ghost" onClick={() => ipc.quit()}>Quit Oumu</button></div>
+        <div className="row-actions">{!IS_WINDOWS && <button className="btn btn--outline" onClick={() => ipc.permissionPrompt()}>Accessibility permission</button>}<button className="btn btn--ghost" onClick={() => ipc.quit()}>Quit Oumu</button></div>
       </div>
     </>
   );

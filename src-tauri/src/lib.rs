@@ -100,9 +100,15 @@ pub fn run() {
             }
 
             let open = MenuItem::with_id(app, "open", "Open Oumu", true, None::<&str>)?;
-            let perms = MenuItem::with_id(app, "perms", "Accessibility permission…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Oumu", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &perms, &quit])?;
+            // Windows asks no permission for UI Automation: nothing to grant there.
+            #[cfg(target_os = "windows")]
+            let menu = Menu::with_items(app, &[&open, &quit])?;
+            #[cfg(not(target_os = "windows"))]
+            let menu = {
+                let perms = MenuItem::with_id(app, "perms", "Accessibility permission…", true, None::<&str>)?;
+                Menu::with_items(app, &[&open, &perms, &quit])?
+            };
             let mut tray = TrayIconBuilder::with_id("main").menu(&menu).show_menu_on_left_click(true).tooltip("Oumu");
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
