@@ -7,8 +7,9 @@
 //! come from the TextPattern, whose GetText is UTF-16 already.
 //!
 //! UI Automation needs no permission on Windows, so the app is always "trusted".
-//! Coordinates are physical screen pixels, which match Tauri's logical ones at
-//! 100% display scaling.
+//! UI Automation and the cursor speak physical pixels; Oumu's windows are placed
+//! in logical ones (wm.rs), so every rect and point is divided by the display
+//! scale of the monitor it is on (1.25 at 125%, ...) on its way out of here.
 
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -17,6 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::OnceLock;
 use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, SAFEARRAY};
 use windows::Win32::System::Ole::{SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayUnaccessData};
 use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
@@ -58,8 +61,29 @@ impl Rect {
         self.w <= 0.0 || self.h <= 0.0
     }
     fn from_rect(r: RECT) -> Rect {
-        Rect { x: r.left as f64, y: r.top as f64, w: (r.right - r.left) as f64, h: (r.bottom - r.top) as f64 }
+        logical(Rect { x: r.left as f64, y: r.top as f64, w: (r.right - r.left) as f64, h: (r.bottom - r.top) as f64 })
     }
+    fn scaled(self, s: f64) -> Rect {
+        Rect { x: self.x / s, y: self.y / s, w: self.w / s, h: self.h / s }
+    }
+}
+
+/// The display scale (1.0 = 100%) of the monitor at a physical point.
+fn scale_at(x: f64, y: f64) -> f64 {
+    unsafe {
+        let m = MonitorFromPoint(POINT { x: x.round() as i32, y: y.round() as i32 }, MONITOR_DEFAULTTONEAREST);
+        let (mut dx, mut dy) = (0u32, 0u32);
+        if GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut dx, &mut dy).is_ok() && dx > 0 {
+            dx as f64 / 96.0
+        } else {
+            1.0
+        }
+    }
+}
+
+/// A physical rect from UI Automation, in Oumu's logical pixels.
+fn logical(r: Rect) -> Rect {
+    r.scaled(scale_at(r.x + r.w / 2.0, r.y + r.h / 2.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +491,7 @@ impl AXElement {
         let Ok(sa) = (unsafe { r.GetBoundingRectangles() }) else { return Vec::new() };
         safearray_f64(sa)
             .chunks_exact(4)
-            .map(|c| Rect { x: c[0], y: c[1], w: c[2], h: c[3] })
+            .map(|c| logical(Rect { x: c[0], y: c[1], w: c[2], h: c[3] }))
             .filter(|r| !r.is_empty())
             .collect()
     }
@@ -628,19 +652,26 @@ pub fn activate_app(pid: i32) -> bool {
     }
 }
 
+/// The pointer, in logical pixels.
 pub fn mouse_location_top_left() -> Option<(f64, f64)> {
     let mut p = POINT::default();
     unsafe { GetCursorPos(&mut p) }.ok()?;
-    Some((p.x as f64, p.y as f64))
+    let s = scale_at(p.x as f64, p.y as f64);
+    Some((p.x as f64 / s, p.y as f64 / s))
 }
 
+/// The primary monitor's height, in logical pixels.
 pub fn primary_screen_height() -> Option<f64> {
     let h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-    (h > 0).then_some(h as f64)
+    (h > 0).then(|| h as f64 / scale_at(0.0, 0.0))
 }
 
+/// Move the pointer to a logical point (the debug probe's /mouse).
 pub fn post_mouse_move(x: f64, y: f64) -> bool {
-    unsafe { SetCursorPos(x.round() as i32, y.round() as i32) }.is_ok()
+    // Logical -> physical: on the monitor the point lands on, logical * scale.
+    let s = scale_at(x, y);
+    let s = scale_at(x * s, y * s);
+    unsafe { SetCursorPos((x * s).round() as i32, (y * s).round() as i32) }.is_ok()
 }
 
 #[cfg(test)]
@@ -653,6 +684,15 @@ mod tests {
         let b = Rect { x: 5.0, y: 5.0, w: 10.0, h: 10.0 };
         assert_eq!(a.intersect(&b), Some(Rect { x: 5.0, y: 5.0, w: 5.0, h: 5.0 }));
         assert!(a.intersect(&Rect { x: 20.0, y: 0.0, w: 1.0, h: 1.0 }).is_none());
+    }
+
+    #[test]
+    fn physical_rects_become_logical() {
+        let r = Rect { x: 300.0, y: 150.0, w: 75.0, h: 30.0 };
+        assert_eq!(r.scaled(1.5), Rect { x: 200.0, y: 100.0, w: 50.0, h: 20.0 });
+        assert_eq!(r.scaled(1.0), r);
+        let s = scale_at(10.0, 10.0);
+        assert!((1.0..=4.0).contains(&s), "display scale {s}");
     }
 
     #[test]
