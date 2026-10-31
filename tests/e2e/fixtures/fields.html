@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -14,14 +14,15 @@
 <body>
 <h1>Oumu field check</h1>
 <label for="ta">Textarea</label>
-<textarea id="ta" aria-label="Textarea"></textarea>
+<textarea id="ta" aria-label="Textarea" spellcheck="false"></textarea>
 <label for="in">Single-line input</label>
-<input id="in" aria-label="Single-line input">
+<input id="in" aria-label="Single-line input" spellcheck="false">
 <label id="ce-label">Contenteditable (like YouTube and Discord)</label>
-<div id="ce" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="ce-label"></div>
+<div id="ce" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false" aria-labelledby="ce-label"></div>
 <label for="pw">Password (Oumu must never read it)</label>
 <input id="pw" type="password" aria-label="Password">
 <label for="ro">Read-only text</label>
 <textarea id="ro" readonly aria-label="Read-only text">This is a example of a sentense nobody can edit.</textarea>
 </body>
 </html>
+

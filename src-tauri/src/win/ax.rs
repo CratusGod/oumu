@@ -33,6 +33,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// UI Automation calls made so far (the debug probe reports them).
 pub static CALLS: AtomicU64 = AtomicU64::new(0);
 
+/// UTF-16 units around the visible text whose underlines are placed too.
+const VISIBLE_SLACK: usize = 300;
+
 /// A screen rectangle in pixels, origin at the top-left of the primary monitor.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -505,7 +508,9 @@ impl AXElement {
         }))
     }
 
-    /// The text that is on screen, as a UTF-16 range (None: treat all as visible).
+    /// The text that is on screen as UTF-16 (start, end) — not (start, length) —
+    /// widened by `VISIBLE_SLACK` each way for half-shown lines and a scroll in
+    /// progress (as on Linux). None: treat all text as visible.
     pub fn visible_text_range(&self, _vis: &Rect) -> Option<(usize, usize)> {
         let tp = self.text_pattern()?;
         count();
@@ -519,7 +524,7 @@ impl AXElement {
         let last = unsafe { ranges.GetElement(n - 1) }.ok()?;
         let start = Self::offset_of(&doc, &first)?;
         let end = Self::offset_of(&doc, &last)? + unsafe { last.GetText(-1) }.ok()?.len();
-        Some((start, end.saturating_sub(start)))
+        Some((start.saturating_sub(VISIBLE_SLACK), end + VISIBLE_SLACK))
     }
 
     pub fn line_for_index(&self, _idx: usize) -> Option<i64> {
