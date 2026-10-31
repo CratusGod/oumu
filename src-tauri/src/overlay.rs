@@ -344,6 +344,10 @@ pub fn create_windows(app: &AppHandle, side: &str) -> tauri::Result<()> {
         .visible(false)
         .build()?;
     let _ = g;
+    // Windows creates an undecorated window at least 136 px wide whatever the
+    // builder asks, and the button is drawn centred in it: 44 px right of its
+    // place (on top of Discord's buttons). A resize after creation is exact.
+    wm::set_size(app, "oumubutton", 60.0, 60.0);
 
     let u = shared_process(app, WebviewWindowBuilder::new(app, "underlines", WebviewUrl::App("index.html".into())))
         .title("")

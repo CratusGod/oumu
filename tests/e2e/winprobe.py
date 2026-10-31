@@ -29,6 +29,32 @@ def wait_for(what: str, fn, timeout: float = 25, every: float = 0.4):
     raise AssertionError(f"timed out waiting for {what} (last: {str(last)[:300]})")
 
 
+def oumu_windows() -> list[dict]:
+    """Oumu's visible top-level windows: rect, size, click-through, topmost."""
+    import ctypes
+    import ctypes.wintypes as wt
+    import subprocess
+    user32 = ctypes.windll.user32
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq oumu.exe", "/FO", "CSV", "/NH"],
+                         capture_output=True, text=True).stdout
+    pids = {int(ln.split(",")[1].strip('"')) for ln in out.splitlines() if ln.startswith('"oumu')}
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    def each(h, _):
+        pid = wt.DWORD()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        if pid.value in pids and user32.IsWindowVisible(h):
+            r = wt.RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            ex = user32.GetWindowLongW(h, -20)
+            found.append({"x": r.left, "y": r.top, "w": r.right - r.left, "h": r.bottom - r.top,
+                          "click_through": bool(ex & 0x20), "topmost": bool(ex & 0x8)})
+        return True
+    user32.EnumWindows(each, 0)
+    return found
+
+
 def summary() -> str:
     s = probe("/state")
     d = s.get("doc") or {}

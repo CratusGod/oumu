@@ -27,7 +27,7 @@ from PIL import ImageGrab
 from pywinauto import Desktop
 
 sys.path.insert(0, str(Path(__file__).parent))
-from winprobe import PORT, probe, wait_for  # noqa: E402
+from winprobe import PORT, oumu_windows, probe, wait_for  # noqa: E402
 
 HERE = Path(__file__).parent
 EMOJI = "\U0001F600"
@@ -67,12 +67,32 @@ def click_center(el):
     time.sleep(0.4)
 
 
+def focused_exe() -> str:
+    """Lower-case exe name of the app that owns the keyboard focus (UI Automation)."""
+    from pywinauto.uia_defines import IUIA
+    pid = IUIA().iuia.GetFocusedElement().CurrentProcessId
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+    return out.split(",")[0].strip('"').lower() if out.startswith('"') else ""
+
+
+def pids_of(exe: str) -> list[int]:
+    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+    return [int(ln.split(",")[1].strip('"')) for ln in out.splitlines() if ln.lower().startswith(f'"{exe.lower()}')]
+
+
 def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field):
-    """focus() puts the caret in the field. Then: type, read, underline, fix, clean up."""
+    """focus() puts the caret in the field. Then: type, read, underline, fix, clean up.
+    Nothing is typed (and nothing cleaned up) unless the focus really is in `app`:
+    a wrong window must never get our text."""
     t0 = time.time()
     status, detail = "PASS", ""
+    typed = False
     try:
         focus()
+        owner = focused_exe()
+        if owner != app:
+            raise AssertionError(f"the focus is in {owner or 'nothing'}, not {app}: typed nothing")
+        typed = True
         type_sentence()
 
         def seen():
@@ -88,6 +108,13 @@ def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field):
         for r in rects:
             assert 0 <= r["x"] and r["x"] + r["w"] <= vis["w"] + 1 and 0 <= r["y"] and r["y"] + r["h"] <= vis["h"] + 1, \
                 f"underline {r} outside the field {vis}"
+        if vis["h"] >= 76:  # the host shows the button only in fields with room for it
+            buttons = wait_for("the Oumu button", lambda: [b for b in oumu_windows() if b["w"] <= 80 and b["h"] <= 80
+                                                           and not b["click_through"]], timeout=6)
+            b = buttons[0]
+            assert (b["w"], b["h"]) == (60, 60), f"button window is {b['w']}x{b['h']}, not 60x60"
+            assert vis["x"] <= b["x"] and b["x"] + b["w"] <= vis["x"] + vis["w"] + 6 \
+                and vis["y"] <= b["y"] and b["y"] + b["h"] <= vis["y"] + vis["h"] + 6, f"button {b} outside the field {vis}"
         ImageGrab.grab().save(out / "shots" / f"{name}_underlined.png")
         res = probe("/accept", {"id": a["id"], "suggestion": 0})
         assert res.get("method") == "paste", f"fixed by {res.get('method')} (whole-text replace: no undo step)"
@@ -102,7 +129,8 @@ def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field):
         ImageGrab.grab().save(out / "shots" / f"{name}_FAIL.png")
     finally:
         try:
-            cleanup()
+            if typed and focused_exe() == app:
+                cleanup()
         except Exception as e:
             print("cleanup:", e)
     RESULTS.append({"name": name, "status": status, "detail": detail, "seconds": round(time.time() - t0, 1)})
@@ -168,14 +196,17 @@ def discord_target(out: Path):
     subprocess.Popen([str(upd), "--processStart", "Discord.exe"])
 
     def message_box():
-        """Discord's box is named "Message #channel" / "Message @friend"."""
-        for w in Desktop(backend="uia").windows(class_name="Chrome_WidgetWin_1"):
-            try:
-                for e in w.descendants(control_type="Edit") + w.descendants(control_type="Group"):
-                    if (e.element_info.name or "").startswith("Message "):
-                        return w, e
-            except Exception:
-                continue
+        """Discord's box is named "Message #channel" / "Message @friend". Only Discord's own
+        windows: other Chromium apps (the Claude app) have a "Message ..." box too."""
+        for pid in pids_of("discord.exe"):
+            for w in Desktop(backend="uia").windows(class_name="Chrome_WidgetWin_1", process=pid):
+                try:
+                    for e in w.descendants(control_type="Edit") + w.descendants(control_type="Group"):
+                        if (e.element_info.name or "").startswith("Message #") or \
+                                (e.element_info.name or "").startswith("Message @"):
+                            return w, e
+                except Exception:
+                    continue
         return None
     w, box = wait_for("Discord's message box", message_box, timeout=20)
 
