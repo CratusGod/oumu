@@ -173,7 +173,19 @@ fn ipc_counts() -> serde_json::Value {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+/// How many UI Automation calls and host ticks Oumu has made since it started.
+#[cfg(target_os = "windows")]
+fn ipc_counts() -> serde_json::Value {
+    use std::sync::atomic::Ordering::Relaxed;
+    json!({
+        "a11y_calls": crate::win::ax::CALLS.load(Relaxed),
+        "ticks": crate::host::TICKS.load(Relaxed),
+        "wakes": crate::pace::WAKES.load(Relaxed),
+        "woken_early": crate::pace::WOKEN_EARLY.load(Relaxed),
+    })
+}
+
+#[cfg(target_os = "macos")]
 fn ipc_counts() -> serde_json::Value {
     json!({})
 }

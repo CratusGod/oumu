@@ -368,6 +368,13 @@ pub fn create_windows(app: &AppHandle, side: &str) -> tauri::Result<()> {
     for label in ["panel", "tab", "oumubutton", "underlines"] {
         wm::adopt(app, label);
     }
+    // Windows: focusable(false) does not stop activation (see win::ax::never_activate).
+    #[cfg(target_os = "windows")]
+    for label in ["tab", "oumubutton", "underlines"] {
+        if let Some(hwnd) = app.get_webview_window(label).and_then(|w| w.hwnd().ok()) {
+            crate::win::ax::never_activate(hwnd.0);
+        }
+    }
     // Seed the placement the layer-shell backend mirrors.
     #[cfg(target_os = "linux")]
     {

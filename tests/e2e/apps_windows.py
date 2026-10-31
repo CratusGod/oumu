@@ -42,7 +42,10 @@ def ps(cmd: str) -> str:
 
 
 def set_clipboard(text: str):
-    ps(f"Set-Clipboard -Value '{text.replace(chr(39), chr(39) * 2)}'")
+    """Through stdin: a long text would not fit on a command line."""
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "[Console]::InputEncoding = [Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+                   input=text, capture_output=True, text=True, encoding="utf-8", creationflags=NO_WINDOW)
 
 
 def type_sentence():

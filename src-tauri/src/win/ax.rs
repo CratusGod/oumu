@@ -36,6 +36,15 @@ pub static CALLS: AtomicU64 = AtomicU64::new(0);
 /// UTF-16 units around the visible text whose underlines are placed too.
 const VISIBLE_SLACK: usize = 300;
 
+/// How long a field's text is reused by range work (placing underlines asks for
+/// it once per underline; a long text over UI Automation is not cheap).
+const TEXT_CACHE: std::time::Duration = std::time::Duration::from_millis(400);
+
+thread_local! {
+    /// (element identity, when read, its text): the host thread's latest read.
+    static TEXT: std::cell::RefCell<Option<(u64, std::time::Instant, String)>> = const { std::cell::RefCell::new(None) };
+}
+
 /// A screen rectangle in pixels, origin at the top-left of the primary monitor.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -141,10 +150,35 @@ pub fn prompt_trust() -> bool {
     is_trusted()
 }
 
-/// Keyboard focus is inside one of Oumu's own windows.
+/// Keyboard focus is inside one of Oumu's own windows (the panel, not an overlay).
 pub fn focus_is_ours() -> bool {
-    let fg = unsafe { GetForegroundWindow() };
+    let fg = front_window();
     window_pid(fg) == std::process::id() as i32
+}
+
+/// One of Oumu's overlays (tab, button, underlines): marked never-activate.
+fn is_our_overlay(hwnd: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE};
+    window_pid(hwnd) == std::process::id() as i32
+        && unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } & WS_EX_NOACTIVATE.0 as isize != 0
+}
+
+/// The window really in front. When the app in front closes, Windows can hand
+/// the foreground to an Oumu overlay; that is nobody's window, so look past it to
+/// the next visible window that is not an overlay.
+fn front_window() -> HWND {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GW_HWNDNEXT};
+    let mut h = unsafe { GetForegroundWindow() };
+    for _ in 0..64 {
+        if h.0.is_null() || !is_our_overlay(h) {
+            break;
+        }
+        h = unsafe { GetWindow(h, GW_HWNDNEXT) }.unwrap_or_default();
+        while !h.0.is_null() && !unsafe { IsWindowVisible(h) }.as_bool() {
+            h = unsafe { GetWindow(h, GW_HWNDNEXT) }.unwrap_or_default();
+        }
+    }
+    h
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +345,17 @@ impl AXElement {
         !self.el.as_ref().and_then(|e| unsafe { e.CurrentIsKeyboardFocusable() }.ok()).map(|b| b.as_bool()).unwrap_or(false)
     }
 
+    /// The text, reused for up to `TEXT_CACHE` after the last read of this field.
+    fn cached_text(&self) -> Option<String> {
+        let key = self.identity_hash();
+        let hit = TEXT.with(|c| {
+            c.borrow().as_ref().filter(|(k, at, _)| *k == key && at.elapsed() < TEXT_CACHE).map(|(_, _, t)| t.clone())
+        });
+        hit.or_else(|| self.string("AXValue"))
+    }
+
     /// "AXValue": the whole text (TextPattern first, so offsets agree with ranges).
+    /// Always read fresh (the host spots edits with it), and kept for range work.
     pub fn string(&self, name: &str) -> Option<String> {
         match name {
             "AXValue" => {
@@ -319,7 +363,10 @@ impl AXElement {
                     count();
                     let doc = unsafe { tp.DocumentRange() }.ok()?;
                     count();
-                    return unsafe { doc.GetText(-1) }.ok().map(|b| b.to_string());
+                    let text = unsafe { doc.GetText(-1) }.ok().map(|b| b.to_string())?;
+                    let key = self.identity_hash();
+                    TEXT.with(|c| *c.borrow_mut() = Some((key, std::time::Instant::now(), text.clone())));
+                    return Some(text);
                 }
                 let v = self.value_pattern()?;
                 count();
@@ -392,8 +439,7 @@ impl AXElement {
         let tp = self.text_pattern()?;
         count();
         let doc = unsafe { tp.DocumentRange() }.ok()?;
-        count();
-        let text = unsafe { doc.GetText(-1) }.ok()?.to_string();
+        let text = self.cached_text()?;
         let before = crate::textmap::slice_utf16(&text, 0, loc);
         let want = crate::textmap::slice_utf16(&text, loc, loc + len);
         let by_code_point = (before.chars().count(), want.chars().count());
@@ -474,7 +520,7 @@ impl AXElement {
         // Qt's QPlainTextEdit answers every line's rect at the first line's height
         // (block-relative). A word after a line break drawn on line one would be
         // a wrong underline: draw none; the panel still lists the mistake.
-        if let (Some(r), Some(text)) = (rects.first(), self.string("AXValue")) {
+        if let (Some(r), Some(text)) = (rects.first(), self.cached_text()) {
             let before = crate::textmap::slice_utf16(&text, 0, loc);
             if before.contains(['\n', '\r', '\u{2029}']) {
                 if let Some(first) = self.range_rects(0, 1).first() {
@@ -606,7 +652,7 @@ fn exe_name(pid: i32) -> Option<String> {
 
 /// (pid, "bundle id" = lower-case exe name, display name = window title's app part).
 pub fn frontmost_app() -> Option<(i32, String, String)> {
-    let hwnd = unsafe { GetForegroundWindow() };
+    let hwnd = front_window();
     if hwnd.0.is_null() {
         return None;
     }
@@ -626,6 +672,18 @@ pub fn frontmost_app() -> Option<(i32, String, String)> {
         .map(str::to_string)
         .unwrap_or_else(|| exe.trim_end_matches(".exe").to_string());
     Some((pid, exe, name))
+}
+
+/// Never let Windows activate this window (WS_EX_NOACTIVATE). Without it, closing
+/// the app in front hands the foreground to an Oumu overlay (the topmost window
+/// left), and the host, seeing Oumu in front, kept the closed field's underlines.
+pub fn never_activate(hwnd: *mut core::ffi::c_void) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE};
+    let hwnd = HWND(hwnd);
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
+    }
 }
 
 /// Bring the app's main window to the front (before a paste).
