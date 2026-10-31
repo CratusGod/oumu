@@ -48,6 +48,30 @@ def set_clipboard(text: str):
                    input=text, capture_output=True, text=True, encoding="utf-8", creationflags=NO_WINDOW)
 
 
+def clipboard_files() -> list[str]:
+    """Names of the files copied on the clipboard (CF_HDROP), read through Win32."""
+    import ctypes
+    import ctypes.wintypes as wt
+    u, sh = ctypes.windll.user32, ctypes.windll.shell32
+    u.GetClipboardData.restype = wt.HANDLE
+    sh.DragQueryFileW.argtypes = [wt.HANDLE, wt.UINT, wt.LPWSTR, wt.UINT]
+    names = []
+    for _ in range(20):
+        if u.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    try:
+        h = u.GetClipboardData(15)
+        if h:
+            for i in range(sh.DragQueryFileW(h, 0xFFFFFFFF, None, 0)):
+                buf = ctypes.create_unicode_buffer(520)
+                sh.DragQueryFileW(h, i, buf, 520)
+                names.append(Path(buf.value).name)
+    finally:
+        u.CloseClipboard()
+    return names
+
+
 def type_sentence():
     """Type the test sentence, the emoji pasted (typing can't produce it)."""
     pyautogui.hotkey("ctrl", "a")
@@ -124,12 +148,16 @@ def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field, unde
             assert vis["x"] <= b["x"] and b["x"] + b["w"] <= vis["x"] + vis["w"] + 6 \
                 and vis["y"] <= b["y"] and b["y"] + b["h"] <= vis["y"] + vis["h"] + 6, f"button {b} outside the field {vis}"
         ImageGrab.grab().save(out / "shots" / f"{name}_underlined.png")
+        # a file copied in Explorer must survive the paste Oumu makes
+        ps(f"Set-Clipboard -Path '{HERE / 'fixtures' / 'fields.html'}'")
         res = probe("/accept", {"id": a["id"], "suggestion": 0})
         assert res.get("method") == "paste", f"fixed by {res.get('method')} (whole-text replace: no undo step)"
         after = wait_for("the fix to show", lambda: (lambda d: d if d and "sentence" in d.get("text", "")
                                                      and "sentense" not in d["text"] else None)(probe("/state").get("doc")),
                          timeout=8)
         assert EMOJI in after["text"], "the emoji got lost"
+        kept = clipboard_files()
+        assert kept == ["fields.html"], f"the copied file is gone from the clipboard (now {kept!r})"
         ImageGrab.grab().save(out / "shots" / f"{name}_fixed.png")
         detail = f"read as {s['doc']['role']}, {len(g['rects'])} underline(s), fixed by paste: {after['text'][:50]!r}"
     except Exception as e:

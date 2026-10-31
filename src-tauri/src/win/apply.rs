@@ -3,6 +3,7 @@
 //! undo step), then, for a plain field that has no text ranges, ValuePattern's
 //! SetValue with the whole new text.
 
+use super::clip;
 use crate::ax::{self, AXElement};
 use crate::textmap::{slice_utf16, splice_utf16};
 use anyhow::{anyhow, Result};
@@ -65,7 +66,7 @@ pub fn replace_range(el: &AXElement, pid: i32, loc: usize, len: usize, replaceme
         log::debug!("apply: paste rung, selection {sel:?} for ({loc}, {len})");
         if sel == Some((loc, len)) && ax::activate_app(pid) {
             sleep(Duration::from_millis(120));
-            match Clip::save().and_then(|clip| clip.paste(replacement).map(|_| clip)) {
+            match paste(replacement) {
                 Ok(clip) => {
                     let mut done = None;
                     for _ in 0..READ_POLLS {
@@ -101,50 +102,17 @@ pub fn replace_range(el: &AXElement, pid: i32, loc: usize, len: usize, replaceme
     Err(anyhow!("This app did not accept the replacement. Try editing it directly."))
 }
 
-/// What was on the clipboard before a paste (text or an image), to put back.
-enum Saved {
-    Text(String),
-    Image(arboard::ImageData<'static>),
-    Nothing,
-}
-
-struct Clip {
-    saved: Saved,
-}
-
-impl Clip {
-    fn save() -> Result<Clip> {
-        let mut cb = arboard::Clipboard::new().map_err(|e| anyhow!("clipboard: {e}"))?;
-        let saved = match cb.get_text() {
-            Ok(t) => Saved::Text(t),
-            Err(_) => match cb.get_image() {
-                Ok(i) => Saved::Image(i.to_owned_img()),
-                Err(_) => Saved::Nothing,
-            },
-        };
-        Ok(Clip { saved })
+/// Save the user's clipboard (every format), put `text` on it privately and press
+/// Ctrl+V in the app in front. The caller restores the clipboard.
+fn paste(text: &str) -> Result<clip::Saved> {
+    let saved = clip::save()?;
+    clip::set_private_text(text)?;
+    sleep(Duration::from_millis(40));
+    if let Err(e) = send_ctrl_v() {
+        saved.restore(text);
+        return Err(e);
     }
-
-    /// Put `text` on the clipboard and press Ctrl+V in the app in front.
-    fn paste(&self, text: &str) -> Result<()> {
-        let mut cb = arboard::Clipboard::new().map_err(|e| anyhow!("clipboard: {e}"))?;
-        cb.set_text(text.to_string()).map_err(|e| anyhow!("clipboard: {e}"))?;
-        sleep(Duration::from_millis(40));
-        send_ctrl_v()
-    }
-
-    /// Put the user's clipboard back, unless they copied something else meanwhile.
-    fn restore(self, ours: &str) {
-        let Ok(mut cb) = arboard::Clipboard::new() else { return };
-        if cb.get_text().ok().as_deref() != Some(ours) {
-            return;
-        }
-        let _ = match self.saved {
-            Saved::Text(t) => cb.set_text(t),
-            Saved::Image(i) => cb.set_image(i),
-            Saved::Nothing => cb.clear(),
-        };
-    }
+    Ok(saved)
 }
 
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {

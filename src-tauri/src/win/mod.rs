@@ -3,3 +3,4 @@
 
 pub mod apply;
 pub mod ax;
+pub mod clip;
