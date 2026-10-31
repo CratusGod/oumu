@@ -429,6 +429,33 @@ impl AXElement {
 
     /// One rect per visual line of `loc..loc + len`.
     pub fn rects_for_range(&self, loc: usize, len: usize) -> Vec<Rect> {
+        // Qt's QPlainTextEdit reports every rect at its block's own height and ignores
+        // scrolling, so no rect it gives can be placed on screen: no underlines there
+        // (the panel and the button's count still have every mistake).
+        com();
+        count();
+        if self.el.as_ref().and_then(|e| unsafe { e.CurrentClassName() }.ok()).is_some_and(|c| c == "QPlainTextEdit") {
+            return Vec::new();
+        }
+        let rects = self.range_rects(loc, len);
+        // Qt's QPlainTextEdit answers every line's rect at the first line's height
+        // (block-relative). A word after a line break drawn on line one would be
+        // a wrong underline: draw none; the panel still lists the mistake.
+        if let (Some(r), Some(text)) = (rects.first(), self.string("AXValue")) {
+            let before = crate::textmap::slice_utf16(&text, 0, loc);
+            if before.contains(['\n', '\r', '\u{2029}']) {
+                if let Some(first) = self.range_rects(0, 1).first() {
+                    if (r.y - first.y).abs() < 1.0 {
+                        log::debug!("rects for {loc}+{len} sit on line one after a line break: not trusted");
+                        return Vec::new();
+                    }
+                }
+            }
+        }
+        rects
+    }
+
+    fn range_rects(&self, loc: usize, len: usize) -> Vec<Rect> {
         let Some(r) = self.text_range(loc, len) else { return Vec::new() };
         count();
         let Ok(sa) = (unsafe { r.GetBoundingRectangles() }) else { return Vec::new() };

@@ -643,6 +643,7 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
             }
             // hover detection
             let mut over_card = false;
+            let mut over_card_body = false;
             if let Some((mx, my)) = ax::mouse_location_top_left() {
                 let lx = mx - vis.x;
                 let ly = my - vis.y;
@@ -653,6 +654,8 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
                     }
                 }
                 over_card = card_rects.iter().any(|c| c.contains(lx, ly));
+                // The first rect is the card itself (the rest bridge it to its word).
+                over_card_body = card_rects.first().is_some_and(|c| c.contains(lx, ly));
             }
             geometry.over_card = over_card;
             let sig = serde_json::to_string(&geometry).unwrap_or_default();
@@ -665,7 +668,10 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
                 if big_enough && show_underlines {
                     wm::set_position(app, "underlines", vis.x, vis.y);
                     wm::set_size(app, "underlines", vis.w.max(1.0), vis.h.max(1.0));
-                    wm::set_passthrough(app, "underlines", !(geometry.hovered.is_some() || over_card));
+                    // Take the pointer only over the card's buttons. Over the word itself
+                    // clicks and the scroll wheel still belong to the app; the card stays
+                    // open regardless, since this loop hit-tests the pointer itself.
+                    wm::set_passthrough(app, "underlines", !over_card_body);
                     if !wm::is_visible(app, "underlines") {
                         wm::show(app, "underlines");
                     }
