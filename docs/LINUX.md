@@ -153,8 +153,9 @@ Toolkit quirks the code handles:
   scaling and multi-monitor setups are untested.
 - **The panel shows on every workspace.** That is intended: it is a layer surface, like a bar.
   Tuck it with the edge tab.
-- **Blank webviews on NVIDIA.** Oumu sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself, unless you
-  set that variable yourself.
+- **Blank webviews on NVIDIA.** Oumu sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` for itself, unless you
+  set it or `WEBKIT_DISABLE_DMABUF_RENDERER` yourself. Avoid `WEBKIT_DISABLE_DMABUF_RENDERER=1` with
+  WebKitGTK 2.54: closed suggestion cards stay on screen.
 
 ## Testing
 

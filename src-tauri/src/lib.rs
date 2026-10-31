@@ -186,11 +186,14 @@ pub fn run() {
 
 
 /// WebKitGTK's DMA-BUF renderer draws blank or flickering webviews on NVIDIA
-/// and on some Wayland setups; Oumu's windows are small, so the shared-memory
-/// path costs nothing. Must run before GTK starts. An explicit setting wins.
+/// and on some Wayland setups, so it runs on shared-memory buffers here.
+/// Not WEBKIT_DISABLE_DMABUF_RENDERER: on WebKitGTK 2.54 that path repaints
+/// only what it thinks changed, and in a transparent overlay a closed card
+/// stayed on screen for good (dead buttons over a fixed word).
+/// Must run before GTK starts. An explicit setting of either variable wins.
 #[cfg(target_os = "linux")]
 fn linux_env() {
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() && std::env::var_os("WEBKIT_DMABUF_RENDERER_FORCE_SHM").is_none() {
+        std::env::set_var("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1");
     }
 }
