@@ -80,7 +80,7 @@ def pids_of(exe: str) -> list[int]:
     return [int(ln.split(",")[1].strip('"')) for ln in out.splitlines() if ln.lower().startswith(f'"{exe.lower()}')]
 
 
-def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field):
+def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field, underlines: bool = True):
     """focus() puts the caret in the field. Then: type, read, underline, fix, clean up.
     Nothing is typed (and nothing cleaned up) unless the focus really is in `app`:
     a wrong window must never get our text."""
@@ -98,13 +98,18 @@ def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field):
         def seen():
             s = probe("/state")
             d = s.get("doc") or {}
-            ok = d.get("bundle_id") == app and "sentense" in d.get("text", "") and (s.get("geometry") or {}).get("rects")
+            ok = d.get("bundle_id") == app and "sentense" in d.get("text", "") and \
+                (not underlines or (s.get("geometry") or {}).get("rects"))
             return s if ok and any(a["original"] == "sentense" for a in s.get("alerts") or []) else None
-        s = wait_for(f"{name}: Oumu to read and underline it", seen)
+        s = wait_for(f"{name}: Oumu to read it" + (" and underline it" if underlines else ""), seen)
         vis, g = s["doc"]["visible"], s["geometry"]
         a = next(x for x in s["alerts"] if x["original"] == "sentense")
         rects = [r for r in g["rects"] if r["id"] == a["id"]]
-        assert rects, "no underline for 'sentense'"
+        if underlines:
+            assert rects, "no underline for 'sentense'"
+        else:
+            time.sleep(1.5)
+            assert not probe("/state")["geometry"]["rects"], "underlines drawn where the app reports no usable rects"
         for r in rects:
             assert 0 <= r["x"] and r["x"] + r["w"] <= vis["w"] + 1 and 0 <= r["y"] and r["y"] + r["h"] <= vis["h"] + 1, \
                 f"underline {r} outside the field {vis}"
@@ -137,21 +142,49 @@ def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field):
     print(f"{status:4} {name:28} {detail}", flush=True)
 
 
+def never_read(win, name: str, label: str, out: Path, type_text: str | None):
+    """A password box or read-only text: Oumu must not take it as the document."""
+    t0 = time.time()
+    status, detail = "PASS", ""
+    try:
+        win.set_focus()
+        click_center(win.child_window(title=label, control_type="Edit").wrapper_object())
+        if type_text:
+            pyautogui.typewrite(type_text, interval=0.02)
+        time.sleep(3)
+        d = probe("/state").get("doc") or {}
+        assert not (d.get("active") and ("hunter2" in d.get("text", "") or "nobody can edit" in d.get("text", ""))), \
+            f"Oumu read it: role {d.get('role')}, text {d.get('text', '')[:40]!r}"
+        detail = "not read"
+    except Exception as e:
+        status, detail = "FAIL", f"{type(e).__name__}: {e}"
+        ImageGrab.grab().save(out / "shots" / f"{name}_FAIL.png")
+    finally:
+        if type_text:
+            clear_field()
+    RESULTS.append({"name": name, "status": status, "detail": detail, "seconds": round(time.time() - t0, 1)})
+    print(f"{status:4} {name:28} {detail}", flush=True)
+
+
 # ------------------------------------------------------------------ targets
-def qt_target(out: Path):
+def qt_target(out: Path, rich: bool):
+    """rich: a QTextEdit, underlined. Otherwise a QPlainTextEdit, whose rects Qt reports
+    wrongly: no underlines, but reading and fixing must still work."""
     mirror = Path(tempfile.gettempdir()) / "oumu_qt_mirror.txt"
     pyw = Path(sys.executable).with_name("pythonw.exe")
+    title = "oumu-e2e-rich" if rich else "oumu-e2e"
     p = subprocess.Popen([str(pyw if pyw.exists() else sys.executable), "-I", str(HERE / "fixtures" / "qt_textedit.py"),
-                          "", str(mirror)])  # pythonw has no console; CREATE_NO_WINDOW would hide the window
+                          "", str(mirror)],  # pythonw has no console; CREATE_NO_WINDOW would hide the window
+                         env=dict(os.environ, OUMU_QT_RICH="1" if rich else "0"))
     exe = (pyw if pyw.exists() else Path(sys.executable)).name.lower()
 
     def focus():  # win32 lookup: a new Qt window shows up in UIA's top-level list late
-        w = Desktop(backend="win32").window(title="oumu-e2e")
+        w = Desktop(backend="win32").window(title=title)
         w.set_focus()
         click_center(w)
     try:
-        wait_for("the Qt window", lambda: Desktop(backend="win32").window(title="oumu-e2e").exists(timeout=0.2))
-        check_field("qt_text_edit", exe, focus, out)
+        wait_for("the Qt window", lambda: Desktop(backend="win32").window(title=title).exists(timeout=0.2))
+        check_field("qt_text_edit" if rich else "qt_plain_text_edit", exe, focus, out, underlines=rich)
     finally:  # the whole tree: a venv's pythonw is a launcher that starts the real one
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
 
@@ -183,6 +216,8 @@ def browser_targets(out: Path):
                 # textarea, input and role=textbox are all Edit controls; the <label> is Text
                 click_center(win.child_window(title=label, control_type="Edit").wrapper_object())
             check_field(name, exe.name.lower(), focus, out)
+        never_read(win, "browser_password", "Password", out, type_text="hunter2 sentense")
+        never_read(win, "browser_readonly", "Read-only text", out, type_text=None)
     finally:
         win.set_focus()
         pyautogui.hotkey("ctrl", "w")  # only the window this test opened
@@ -226,7 +261,8 @@ def main():
                             creationflags=NO_WINDOW)
     try:
         wait_for("Oumu's debug probe", lambda: probe("/health").get("trusted"))
-        qt_target(out)
+        qt_target(out, rich=True)
+        qt_target(out, rich=False)
         browser_targets(out)
         if "--discord" in sys.argv:
             discord_target(out)

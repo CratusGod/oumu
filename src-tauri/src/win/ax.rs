@@ -231,7 +231,13 @@ impl AXElement {
         // its own top-level window reports "Window", with an editable TextPattern.
         let editable_text = self.text_pattern().is_some() && !self.read_only();
         let role = if ct == UIA_EditControlTypeId {
-            if self.text_pattern().is_some() { "AXTextArea" } else { "AXTextField" }
+            if self.read_only() {
+                "AXStaticText" // text nobody can edit (a log, a read-only box) is not checked
+            } else if self.text_pattern().is_some() {
+                "AXTextArea"
+            } else {
+                "AXTextField"
+            }
         } else if ct == UIA_ComboBoxControlTypeId {
             "AXComboBox"
         } else if editable_text {
