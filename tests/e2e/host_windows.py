@@ -21,36 +21,19 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
 import pyautogui
 from PIL import ImageGrab
 
-PORT = 7811
-TEXT = "This is a example of a sentense that need some fixes.\rOumu should underline the mistakes."
+sys.path.insert(0, str(Path(__file__).parent))
+from winprobe import PORT, probe, wait_for  # noqa: E402
+
+
+# The emoji before the mistake checks that offsets survive a character that is two
+# UTF-16 units (apps count it as one or two UIA "characters").
+TEXT = "This is a example 😀 of a sentense that need some fixes.\rOumu should underline the mistakes."
 RESULTS: list[dict] = []
-
-
-def probe(path: str, body: dict | None = None, timeout: float = 15) -> dict:
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=data, method="POST" if data else "GET")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
-
-
-def wait_for(what: str, fn, timeout: float = 25, every: float = 0.4):
-    end = time.time() + timeout
-    last = None
-    while time.time() < end:
-        try:
-            last = fn()
-            if last:
-                return last
-        except Exception as e:  # the probe is not up yet, etc.
-            last = e
-        time.sleep(every)
-    raise AssertionError(f"timed out waiting for {what} (last: {str(last)[:200]})")
 
 
 def step(name: str, fn):
@@ -84,7 +67,8 @@ def main():
     scratch.parent.mkdir(exist_ok=True)
     scratch.write_text(TEXT.replace("\r", "\r\n"), encoding="utf-8")
     env = dict(os.environ, OUMU_DEBUG_PORT=str(PORT), RUST_LOG="info")
-    oumu = subprocess.Popen([str(exe)], env=env, stdout=open(out / "oumu_log.txt", "w"), stderr=subprocess.STDOUT)
+    oumu = subprocess.Popen([str(exe)], env=env, stdout=open(out / "oumu_log.txt", "w"), stderr=subprocess.STDOUT,
+                            creationflags=subprocess.CREATE_NO_WINDOW)  # a debug build has a console
     pad = None
     state: dict = {}
     try:

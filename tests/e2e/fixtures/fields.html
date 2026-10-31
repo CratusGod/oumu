@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Oumu field check</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 40px; background: #fff; color: #111; }
+  label { display: block; margin-top: 24px; font-weight: 600; }
+  textarea, input, [contenteditable] { width: 640px; font: inherit; padding: 8px; border: 1px solid #999; border-radius: 6px; }
+  textarea { height: 110px; }
+  [contenteditable] { min-height: 80px; }
+</style>
+</head>
+<body>
+<h1>Oumu field check</h1>
+<label for="ta">Textarea</label>
+<textarea id="ta" aria-label="Textarea"></textarea>
+<label for="in">Single-line input</label>
+<input id="in" aria-label="Single-line input">
+<label id="ce-label">Contenteditable (like YouTube and Discord)</label>
+<div id="ce" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="ce-label"></div>
+</body>
+</html>

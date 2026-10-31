@@ -227,12 +227,17 @@ impl AXElement {
             return Some("AXSecureTextField".into());
         }
         // Compared with ==, not matched: in a `match` these names would bind, not compare.
+        // What an element can do beats what it says it is: a Qt text edit that is
+        // its own top-level window reports "Window", with an editable TextPattern.
+        let editable_text = self.text_pattern().is_some() && !self.read_only();
         let role = if ct == UIA_EditControlTypeId {
             if self.text_pattern().is_some() { "AXTextArea" } else { "AXTextField" }
-        } else if ct == UIA_DocumentControlTypeId {
-            if self.is_settable("AXValue") { "AXTextArea" } else { "AXWebArea" }
         } else if ct == UIA_ComboBoxControlTypeId {
             "AXComboBox"
+        } else if editable_text {
+            "AXTextArea"
+        } else if ct == UIA_DocumentControlTypeId {
+            "AXWebArea"
         } else if ct == UIA_WindowControlTypeId {
             "AXWindow"
         } else if ct == UIA_PaneControlTypeId {
@@ -344,21 +349,54 @@ impl AXElement {
         Some((start, len))
     }
 
-    /// A text range `loc..loc + len` (UTF-16 units; UIA's Character unit).
+    /// A text range for the UTF-16 range `loc..loc + len`.
+    ///
+    /// UIA moves by "Character", and apps disagree on what that is: Chromium and
+    /// Electron count a code point (an emoji is one), RichEdit a UTF-16 unit. So
+    /// both counts are tried and the range whose text is the wanted text wins;
+    /// a guess that lands one letter off is never used.
     fn text_range(&self, loc: usize, len: usize) -> Option<IUIAutomationTextRange> {
         let tp = self.text_pattern()?;
         count();
-        let r = unsafe { tp.DocumentRange() }.ok()?;
-        unsafe {
-            r.MoveEndpointByRange(TextPatternRangeEndpoint_End, &r, TextPatternRangeEndpoint_Start).ok()?;
-            if loc > 0 {
-                r.Move(TextUnit_Character, loc as i32).ok()?;
-            }
-            if len > 0 {
-                r.MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, len as i32).ok()?;
+        let doc = unsafe { tp.DocumentRange() }.ok()?;
+        count();
+        let text = unsafe { doc.GetText(-1) }.ok()?.to_string();
+        let before = crate::textmap::slice_utf16(&text, 0, loc);
+        let want = crate::textmap::slice_utf16(&text, loc, loc + len);
+        let by_code_point = (before.chars().count(), want.chars().count());
+        let mut tries = vec![by_code_point];
+        if (loc, len) != by_code_point {
+            tries.push((loc, len));
+        }
+        for (start, n) in tries {
+            let Some(r) = Self::range_by_units(&doc, start, n) else { continue };
+            count();
+            let got = if n > 0 {
+                unsafe { r.GetText(-1) }.ok().map(|b| b.to_string())
+            } else {
+                // An empty range has no text: check what lies before it instead.
+                Self::offset_of(&doc, &r).map(|o| crate::textmap::slice_utf16(&text, 0, o))
+            };
+            if got.as_deref() == Some(if n > 0 { want.as_str() } else { before.as_str() }) {
+                return Some(r);
             }
         }
-        Some(r)
+        log::debug!("no UIA range matches {loc}+{len}");
+        None
+    }
+
+    fn range_by_units(doc: &IUIAutomationTextRange, start: usize, n: usize) -> Option<IUIAutomationTextRange> {
+        unsafe {
+            let r = doc.Clone().ok()?;
+            r.MoveEndpointByRange(TextPatternRangeEndpoint_End, &r, TextPatternRangeEndpoint_Start).ok()?;
+            if start > 0 && r.Move(TextUnit_Character, start as i32).ok()? != start as i32 {
+                return None;
+            }
+            if n > 0 {
+                r.MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, n as i32).ok()?;
+            }
+            Some(r)
+        }
     }
 
     pub fn set_range(&self, name: &str, loc: usize, len: usize) -> Result<(), i32> {
