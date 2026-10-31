@@ -10,6 +10,10 @@ pub mod ax;
 pub mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{apply, ax};
+#[cfg(target_os = "windows")]
+pub mod win;
+#[cfg(target_os = "windows")]
+pub use win::{apply, ax};
 pub mod casual;
 pub mod commands;
 pub mod debug_server;

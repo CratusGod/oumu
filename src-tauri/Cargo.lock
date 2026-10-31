@@ -5018,6 +5018,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "webkit2gtk",
+ "windows 0.61.3",
  "zbus",
 ]
 

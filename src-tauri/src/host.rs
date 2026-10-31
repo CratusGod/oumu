@@ -53,6 +53,16 @@ pub const BUILT_IN_SKIP: &[&str] = &[
     "UXTerm",
     "Rio",
     "dev.warp.Warp",
+    // Windows exe names (lower case).
+    "windowsterminal.exe",
+    "openconsole.exe",
+    "conhost.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "wezterm-gui.exe",
+    "alacritty.exe",
+    "mintty.exe",
 ];
 
 pub fn built_in_skip(bundle_id: &str) -> bool {
@@ -402,7 +412,7 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
     let ours = front_bid == OUR_BUNDLE;
     // Layer surfaces never become Hyprland's active window: Oumu is "in front"
     // when the keyboard focus is inside its own panel.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let ours = ours || front_pid == std::process::id() as i32 || ax::focus_is_ours();
 
     // An open panel keeps the keyboard (for Esc) only while the pointer is on
@@ -712,7 +722,7 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
 }
 
 /// Screen rects (one per visual line) for a UTF-16 range.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn rects_for_range(el: &AXElement, loc: usize, len: usize) -> Vec<Rect> {
     if len == 0 {
         return Vec::new();
@@ -721,7 +731,7 @@ fn rects_for_range(el: &AXElement, loc: usize, len: usize) -> Vec<Rect> {
 }
 
 /// Screen rects (one per visual line) for a UTF-16 range.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn rects_for_range(el: &AXElement, loc: usize, len: usize) -> Vec<Rect> {
     let mut out = Vec::new();
     if len == 0 {
