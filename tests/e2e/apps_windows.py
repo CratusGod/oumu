@@ -137,9 +137,12 @@ def check_field(name: str, app: str, focus, out: Path, cleanup=clear_field, unde
         else:
             time.sleep(1.5)
             assert not probe("/state")["geometry"]["rects"], "underlines drawn where the app reports no usable rects"
+        # On screen: rects are relative to the layer, which grows (also upwards) while a card is open
+        ox, oy = g["origin_x"], g["origin_y"]
         for r in rects:
-            assert 0 <= r["x"] and r["x"] + r["w"] <= vis["w"] + 1 and 0 <= r["y"] and r["y"] + r["h"] <= vis["h"] + 1, \
-                f"underline {r} outside the field {vis}"
+            sx, sy = ox + r["x"], oy + r["y"]
+            assert vis["x"] - 1 <= sx and sx + r["w"] <= vis["x"] + vis["w"] + 1 \
+                and vis["y"] - 1 <= sy and sy + r["h"] <= vis["y"] + vis["h"] + 1, f"underline {r} outside the field {vis}"
         if vis["h"] >= 76:  # the host shows the button only in fields with room for it
             buttons = wait_for("the Oumu button", lambda: [b for b in oumu_windows() if b["w"] <= 80 and b["h"] <= 80
                                                            and not b["click_through"]], timeout=6)
