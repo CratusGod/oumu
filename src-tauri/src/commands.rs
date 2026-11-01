@@ -539,7 +539,9 @@ pub fn tuck_panel(app: AppHandle) {
 pub fn highlighted_text() -> Option<String> {
     #[cfg(target_os = "linux")]
     return crate::linux::selection::highlighted_text();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    return crate::win::remote::highlighted_text();
+    #[cfg(target_os = "macos")]
     None
 }
 
@@ -548,7 +550,9 @@ pub fn highlighted_text() -> Option<String> {
 pub fn take_pending_translation() -> Option<String> {
     #[cfg(target_os = "linux")]
     return crate::linux::remote::take_pending();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    return crate::win::remote::take_pending();
+    #[cfg(target_os = "macos")]
     None
 }
 

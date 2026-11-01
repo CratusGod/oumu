@@ -14,6 +14,10 @@ pub use linux::{apply, ax};
 pub mod win;
 #[cfg(target_os = "windows")]
 pub use win::{apply, ax};
+#[cfg(target_os = "linux")]
+use linux::remote;
+#[cfg(target_os = "windows")]
+use win::remote;
 pub mod casual;
 pub mod commands;
 pub mod debug_server;
@@ -48,18 +52,18 @@ pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
     #[cfg(target_os = "linux")]
     linux_env();
-    // `oumu --translate` (a keybind): hand the request to the running Oumu,
-    // or start one that translates once it is up.
-    #[cfg(target_os = "linux")]
-    let translate_on_start = std::env::args().any(|a| a == linux::remote::TRANSLATE_FLAG);
-    #[cfg(target_os = "linux")]
-    if translate_on_start && linux::remote::send_translate() {
+    // `oumu --translate` (a keybind; on Windows also Utsuri): hand the request to
+    // the running Oumu, or start one that translates once it is up.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let translate_on_start = std::env::args().any(|a| a == remote::TRANSLATE_FLAG);
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if translate_on_start && remote::send_translate() {
         return;
     }
     // One Oumu at a time: a second launch (launcher, autostart) opens
     // the running one's panel and exits.
-    #[cfg(target_os = "linux")]
-    if !translate_on_start && linux::remote::send_open() {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if !translate_on_start && remote::send_open() {
         return;
     }
 
@@ -86,15 +90,15 @@ pub fn run() {
             #[cfg(not(target_os = "linux"))]
             let trusted = ax::is_trusted();
             overlay::set_tucked(&handle, &dock_side, trusted, false, false);
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
-                linux::remote::listen(handle.clone());
+                remote::listen(handle.clone());
                 if translate_on_start {
                     let h = handle.clone();
                     std::thread::spawn(move || {
                         // Let the panel's page load before it is asked to translate.
                         std::thread::sleep(std::time::Duration::from_millis(1500));
-                        linux::remote::translate_highlight(&h);
+                        remote::translate_highlight(&h);
                     });
                 }
             }

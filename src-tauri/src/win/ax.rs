@@ -284,7 +284,7 @@ impl AXElement {
         let e = self.el.as_ref()?;
         let ct = self.control_type()?;
         count();
-        if unsafe { e.CurrentIsPassword() }.map(|b| b.as_bool()).unwrap_or(false) {
+        if unsafe { e.CurrentIsPassword() }.map(|b| b.as_bool()).unwrap_or(false) || self.is_sign_in_field() {
             return Some("AXSecureTextField".into());
         }
         // Compared with ==, not matched: in a `match` these names would bind, not compare.
@@ -317,6 +317,25 @@ impl AXElement {
 
     pub fn subrole(&self) -> Option<String> {
         None
+    }
+
+    /// An email, username, phone or login box (a sign-in form): never checked,
+    /// like a password. Told by its label, id or hint, or by holding a single
+    /// word with an @ in it.
+    fn is_sign_in_field(&self) -> bool {
+        let Some(e) = self.el.as_ref() else { return false };
+        count();
+        let props = [
+            unsafe { e.CurrentName() }.map(|b| b.to_string()).unwrap_or_default(),
+            unsafe { e.CurrentAutomationId() }.map(|b| b.to_string()).unwrap_or_default(),
+            unsafe { e.CurrentHelpText() }.map(|b| b.to_string()).unwrap_or_default(),
+        ];
+        if props.iter().any(|p| names_sign_in(p)) {
+            return true;
+        }
+        self.value_pattern()
+            .and_then(|v| unsafe { v.CurrentValue() }.ok())
+            .is_some_and(|v| looks_like_login(&v.to_string()))
     }
 
     fn text_pattern(&self) -> Option<IUIAutomationTextPattern> {
@@ -601,6 +620,23 @@ impl AXElement {
     }
 }
 
+/// A field label/id/hint naming a sign-in detail (English and Vietnamese).
+fn names_sign_in(s: &str) -> bool {
+    let s = s.to_lowercase();
+    const WORDS: &[&str] = &[
+        "email", "e-mail", "username", "user name", "user id", "userid", "login", "log in", "sign in", "signin",
+        "account", "phone", "mobile number", "identifier", "otp", "verification code", "one-time code",
+        "tên đăng nhập", "tên người dùng", "địa chỉ email", "số điện thoại", "đăng nhập", "mã xác minh",
+    ];
+    WORDS.iter().any(|w| s.contains(w))
+}
+
+/// A value that is a login, not prose: one word holding an @ (an email address).
+fn looks_like_login(v: &str) -> bool {
+    let v = v.trim();
+    !v.is_empty() && !v.contains(char::is_whitespace) && v.contains('@')
+}
+
 // ---------------------------------------------------------------------------
 // SAFEARRAY helpers
 
@@ -747,6 +783,19 @@ mod tests {
         let b = Rect { x: 5.0, y: 5.0, w: 10.0, h: 10.0 };
         assert_eq!(a.intersect(&b), Some(Rect { x: 5.0, y: 5.0, w: 5.0, h: 5.0 }));
         assert!(a.intersect(&Rect { x: 20.0, y: 0.0, w: 1.0, h: 1.0 }).is_none());
+    }
+
+    #[test]
+    fn sign_in_fields_are_recognised() {
+        for s in ["Email or phone", "Username", "identifierId", "Enter your e-mail", "Số điện thoại", "loginfmt", "One-time code"] {
+            assert!(names_sign_in(s), "{s}");
+        }
+        for s in ["Add a comment…", "Message #private", "Textarea", "Search", "Describe the problem"] {
+            assert!(!names_sign_in(s), "{s}");
+        }
+        assert!(looks_like_login("nghia@example.com"));
+        assert!(!looks_like_login("mail me at nghia@example.com please"));
+        assert!(!looks_like_login("sentense"));
     }
 
     #[test]
