@@ -330,7 +330,7 @@ impl AXElement {
             unsafe { e.CurrentAutomationId() }.map(|b| b.to_string()).unwrap_or_default(),
             unsafe { e.CurrentHelpText() }.map(|b| b.to_string()).unwrap_or_default(),
         ];
-        if props.iter().any(|p| names_sign_in(p)) {
+        if props.iter().any(|p| names_sign_in(p) || names_address_bar(p)) {
             return true;
         }
         self.value_pattern()
@@ -631,6 +631,12 @@ fn names_sign_in(s: &str) -> bool {
     WORDS.iter().any(|w| s.contains(w))
 }
 
+/// A browser's address bar (Chromium, Edge, Helium, Firefox): URLs, not prose.
+fn names_address_bar(s: &str) -> bool {
+    let s = s.to_lowercase();
+    s == "address and search bar" || s.starts_with("search or enter address") || s == "search with google or enter address"
+}
+
 /// A value that is a login, not prose: one word holding an @ (an email address).
 fn looks_like_login(v: &str) -> bool {
     let v = v.trim();
@@ -793,6 +799,8 @@ mod tests {
         for s in ["Add a comment…", "Message #private", "Textarea", "Search", "Describe the problem"] {
             assert!(!names_sign_in(s), "{s}");
         }
+        assert!(names_address_bar("Address and search bar") && names_address_bar("Search or enter address"));
+        assert!(!names_address_bar("Add a comment…"));
         assert!(looks_like_login("nghia@example.com"));
         assert!(!looks_like_login("mail me at nghia@example.com please"));
         assert!(!looks_like_login("sentense"));

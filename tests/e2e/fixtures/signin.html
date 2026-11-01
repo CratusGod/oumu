@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Oumu sign-in check</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 40px; background: #fff; color: #111; }
+  label { display: block; margin-top: 18px; font-weight: 600; }
+  input, textarea { width: 520px; font: inherit; padding: 8px; border: 1px solid #999; border-radius: 6px; }
+  textarea { height: 90px; }
+</style>
+</head>
+<body>
+<h1>Oumu sign-in check</h1>
+<form onsubmit="return false">
+<label for="email">Email</label>
+<input id="email" type="email" autocomplete="email" aria-label="Email" spellcheck="false">
+<label for="user">Username</label>
+<input id="user" autocomplete="username" aria-label="Username" spellcheck="false">
+<label for="phone">Số điện thoại</label>
+<input id="phone" type="tel" aria-label="Số điện thoại" spellcheck="false">
+<label for="identifierId">Email or phone</label>
+<input id="identifierId" aria-label="Email or phone" spellcheck="false">
+<label for="bio">About you (Oumu should check this one)</label>
+<textarea id="bio" aria-label="About you" spellcheck="false"></textarea>
+</form>
+</body>
+</html>

@@ -4,6 +4,8 @@ import { ruleName, wordDiff } from "../lib/text";
 import type { Alert, Geometry } from "../lib/types";
 
 const CARD_W = 300;
+/** The card's usual height: room for it below the word, else it goes above. */
+const CARD_H = 220;
 /** Dismissals of one rule before the card offers to turn it off. */
 const MUTE_OFFER_AFTER = 2;
 
@@ -70,8 +72,10 @@ export function Underlines() {
   let cardStyle: React.CSSProperties = {};
   if (anchor) {
     const left = Math.max(4, Math.min(anchor.x, geo.width - CARD_W - 4));
+    // The card is about 210 px tall; the host makes this layer tall enough for it
+    // (CARD_ROOM in host.rs), below a short field, or above it near the screen's end.
     const below = anchor.y + anchor.h + 8;
-    const top = below + 150 < geo.height ? below : Math.max(4, anchor.y - 160);
+    const top = below + CARD_H < geo.height ? below : Math.max(4, anchor.y - CARD_H - 8);
     cardStyle = { left, top };
   }
 

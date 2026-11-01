@@ -79,6 +79,12 @@ const SPOT_DEBOUNCE: Duration = Duration::from_millis(3500);
 /// Longer documents are spot-checked on demand only (the Spot check button).
 const SPOT_MAX_WORDS: usize = 6000;
 const MAX_CHARS: usize = 80_000;
+/// Fields at least this tall get underlines (thinner ones are slivers, not boxes).
+const MIN_FIELD_H: f64 = 16.0;
+/// The underline layer is at least this tall, so a one-line field has room for the line.
+const MIN_LAYER_H: f64 = 30.0;
+/// Room the suggestion card needs in the underline layer (Underlines.tsx: CARD_ROOM).
+const CARD_ROOM: f64 = 250.0;
 const BUTTON_SIZE: f64 = 48.0;
 const BUTTON_INSET: f64 = 14.0;
 
@@ -635,24 +641,48 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
     match (active_doc, element) {
         (Some(d), Some(el)) => {
             let vis = d.visible;
-            let big_enough = vis.w >= 60.0 && vis.h >= 28.0;
-            let mut geometry = Geometry { origin_x: vis.x, origin_y: vis.y, width: vis.w, height: vis.h, rects: vec![], hovered: None, over_card: false };
+            // A one-line box (YouTube's comment box starts 20 px tall) still gets
+            // underlines: its overlay is made taller than the box, downwards, so
+            // the line drawn under the text has room. Only slivers are skipped.
+            let big_enough = vis.w >= 60.0 && vis.h >= MIN_FIELD_H;
+            let mut layer_h = vis.h.max(MIN_LAYER_H);
+            let mut geometry = Geometry { origin_x: vis.x, origin_y: vis.y, width: vis.w, height: layer_h, rects: vec![], hovered: None, over_card: false };
             let hidden = covered_by_panel(app);
             if big_enough && show_underlines {
                 geometry.rects = rects.get(d, &el, &alerts, hidden.as_ref());
             }
-            // hover detection
-            let mut over_card = false;
-            let mut over_card_body = false;
-            if let Some((mx, my)) = ax::mouse_location_top_left() {
-                let lx = mx - vis.x;
-                let ly = my - vis.y;
+            // hover detection (rects are relative to the field here)
+            let pointer = ax::mouse_location_top_left();
+            if let Some((mx, my)) = pointer {
+                let (lx, ly) = (mx - vis.x, my - vis.y);
                 for r in &geometry.rects {
                     if lx >= r.x - 2.0 && lx <= r.x + r.w + 2.0 && ly >= r.y - 2.0 && ly <= r.y + r.h + 4.0 {
                         geometry.hovered = Some(r.id.clone());
                         break;
                     }
                 }
+            }
+            // The card is drawn inside this layer: while one is open (or opening),
+            // the layer grows to hold it, below the field, or above it when the
+            // screen ends first. A short field (a chat box) clipped it before.
+            if geometry.hovered.is_some() || !card_rects.is_empty() {
+                let (_, sy, _, sh) = overlay::primary_logical(app);
+                if vis.y + layer_h + CARD_ROOM <= sy + sh {
+                    layer_h += CARD_ROOM;
+                } else {
+                    let up = CARD_ROOM.min(vis.y - sy).max(0.0);
+                    geometry.origin_y = vis.y - up;
+                    layer_h += up;
+                    for r in &mut geometry.rects {
+                        r.y += up;
+                    }
+                }
+                geometry.height = layer_h;
+            }
+            let mut over_card = false;
+            let mut over_card_body = false;
+            if let Some((mx, my)) = pointer {
+                let (lx, ly) = (mx - geometry.origin_x, my - geometry.origin_y);
                 over_card = card_rects.iter().any(|c| c.contains(lx, ly));
                 // The first rect is the card itself (the rest bridge it to its word).
                 over_card_body = card_rects.first().is_some_and(|c| c.contains(lx, ly));
@@ -666,8 +696,8 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
             }
             if app.get_webview_window("underlines").is_some() {
                 if big_enough && show_underlines {
-                    wm::set_position(app, "underlines", vis.x, vis.y);
-                    wm::set_size(app, "underlines", vis.w.max(1.0), vis.h.max(1.0));
+                    wm::set_position(app, "underlines", geometry.origin_x, geometry.origin_y);
+                    wm::set_size(app, "underlines", vis.w.max(1.0), layer_h);
                     // Take the pointer only over the card's buttons. Over the word itself
                     // clicks and the scroll wheel still belong to the app; the card stays
                     // open regardless, since this loop hit-tests the pointer itself.

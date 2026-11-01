@@ -7,6 +7,8 @@ import * as I from "../../components/icons";
 import { RewriteResult } from "./Rewrite";
 
 const AUTO = "Auto-detect";
+/** WebView2 (Windows): Utsuri sends text here; Ryoku keybinds are Linux-only. */
+const IS_WINDOWS = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
 
 /** A language picker that doubles as the label of the text box under it. */
 function LangPicker({ value, options, label, disabled, onChange }: { value: string; options: string[]; label?: (l: string) => string; disabled: boolean; onChange: (v: string) => void }) {
@@ -107,7 +109,9 @@ export function Translate({ ctx }: { ctx: Ctx }) {
           <div className="result-box placeholder-box">The translation appears here.</div>
         )}
         <div className="hint" style={{ marginTop: 14, textAlign: "center", color: "var(--text-subdued)", fontSize: 12 }}>
-          From anywhere: bind <code>oumu --translate</code> to a key (Ryoku Hub → Keybinds).
+          {IS_WINDOWS
+            ? <>From anywhere: drag a file with Utsuri, tap Shift, drop it on <b>Translate</b>. Or run <code>oumu --translate</code> to translate what you selected.</>
+            : <>From anywhere: bind <code>oumu --translate</code> to a key (Ryoku Hub → Keybinds).</>}
         </div>
       </div>
     </>
