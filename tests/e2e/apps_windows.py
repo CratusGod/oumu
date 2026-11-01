@@ -274,7 +274,13 @@ def discord_target(out: Path):
                 except Exception:
                     continue
         return None
-    w, box = wait_for("Discord's message box", message_box, timeout=20)
+    try:
+        w, box = wait_for("Discord's message box", message_box, timeout=20)
+    except AssertionError:  # a voice view or settings open: never click around someone's Discord
+        RESULTS.append({"name": "discord_message_box", "status": "SKIP",
+                        "detail": "no text channel open in Discord", "seconds": 20})
+        print("SKIP discord_message_box          no text channel open in Discord", flush=True)
+        return
 
     def focus():
         w.set_focus()
