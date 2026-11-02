@@ -49,9 +49,16 @@ pub fn run() {
     if linux::remote::launched_by_browser(&std::env::args().collect::<Vec<_>>()) {
         std::process::exit(linux::remote::run_native_host());
     }
+    // Windows: a release build has no console, so the log goes to a file.
+    #[cfg(target_os = "windows")]
+    win::startup::init_logging();
+    #[cfg(not(target_os = "windows"))]
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
     #[cfg(target_os = "linux")]
     linux_env();
+    // Windows: started at sign-in (the Run key), the taskbar may not exist yet.
+    #[cfg(target_os = "windows")]
+    win::startup::wait_for_taskbar();
     // `oumu --translate` (a keybind; on Windows also Utsuri): hand the request to
     // the running Oumu, or start one that translates once it is up.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -103,35 +110,15 @@ pub fn run() {
                 }
             }
 
-            let open = MenuItem::with_id(app, "open", "Open Oumu", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Oumu", true, None::<&str>)?;
-            // Windows asks no permission for UI Automation: nothing to grant there.
+            // Windows: started at sign-in, the taskbar may not take a tray icon yet.
+            // That must not end Oumu: keep trying in the background instead.
             #[cfg(target_os = "windows")]
-            let menu = Menu::with_items(app, &[&open, &quit])?;
-            #[cfg(not(target_os = "windows"))]
-            let menu = {
-                let perms = MenuItem::with_id(app, "perms", "Accessibility permission…", true, None::<&str>)?;
-                Menu::with_items(app, &[&open, &perms, &quit])?
-            };
-            let mut tray = TrayIconBuilder::with_id("main").menu(&menu).show_menu_on_left_click(true).tooltip("Oumu");
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
+            if let Err(e) = build_tray(&handle) {
+                log::warn!("tray icon not ready ({e}); retrying");
+                retry_tray(handle.clone());
             }
-            tray.on_menu_event(|app, event| match event.id.as_ref() {
-                "open" => commands::open_panel_inner(app, "review", true),
-                "perms" => {
-                    // Linux: a D-Bus round trip and `gsettings`; keep it off the GTK main thread.
-                    #[cfg(target_os = "linux")]
-                    std::thread::spawn(|| {
-                        ax::prompt_trust();
-                    });
-                    #[cfg(not(target_os = "linux"))]
-                    ax::prompt_trust();
-                }
-                "quit" => app.exit(0),
-                _ => {}
-            })
-            .build(app)?;
+            #[cfg(not(target_os = "windows"))]
+            build_tray(&handle)?;
 
             host::spawn(handle.clone(), shared.clone());
             debug_server::spawn(handle.clone(), shared.clone());
@@ -200,6 +187,62 @@ pub fn run() {
         .expect("error while running Oumu");
 }
 
+
+/// The tray icon and its menu (Open, Quit; Accessibility permission off Windows).
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Open Oumu", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Oumu", true, None::<&str>)?;
+    // Windows asks no permission for UI Automation: nothing to grant there.
+    #[cfg(target_os = "windows")]
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    #[cfg(not(target_os = "windows"))]
+    let menu = {
+        let perms = MenuItem::with_id(app, "perms", "Accessibility permission…", true, None::<&str>)?;
+        Menu::with_items(app, &[&open, &perms, &quit])?
+    };
+    let mut tray = TrayIconBuilder::with_id("main").menu(&menu).show_menu_on_left_click(true).tooltip("Oumu");
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.on_menu_event(|app, event| match event.id.as_ref() {
+        "open" => commands::open_panel_inner(app, "review", true),
+        "perms" => {
+            // Linux: a D-Bus round trip and `gsettings`; keep it off the GTK main thread.
+            #[cfg(target_os = "linux")]
+            std::thread::spawn(|| {
+                ax::prompt_trust();
+            });
+            #[cfg(not(target_os = "linux"))]
+            ax::prompt_trust();
+        }
+        "quit" => app.exit(0),
+        _ => {}
+    })
+    .build(app)?;
+    Ok(())
+}
+
+/// Try the tray icon again every 2 s (for up to 5 minutes) until the taskbar takes it.
+#[cfg(target_os = "windows")]
+fn retry_tray(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        for _ in 0..150 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let (tx, rx) = std::sync::mpsc::channel();
+            let h = app.clone();
+            if app.run_on_main_thread(move || {
+                let _ = tx.send(build_tray(&h).is_ok());
+            }).is_err() {
+                return;
+            }
+            if rx.recv().unwrap_or(false) {
+                log::info!("tray icon added");
+                return;
+            }
+        }
+        log::error!("the taskbar never took Oumu's tray icon");
+    });
+}
 
 /// WebKitGTK's DMA-BUF renderer draws blank or flickering webviews on NVIDIA
 /// and on some Wayland setups, so it runs on shared-memory buffers here.

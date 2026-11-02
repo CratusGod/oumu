@@ -6,3 +6,4 @@ pub mod autostart;
 pub mod ax;
 pub mod clip;
 pub mod remote;
+pub mod startup;

@@ -25,18 +25,28 @@ fn command() -> Result<String, String> {
 
 /// Oumu is in the Run key.
 pub fn enabled() -> bool {
+    enabled_as(VALUE)
+}
+
+/// Add or remove Oumu from the Run key; returns the state after.
+pub fn set(on: bool) -> Result<bool, String> {
+    set_as(VALUE, on)
+}
+
+fn enabled_as(value: &str) -> bool {
     let Some(key) = open(KEY_QUERY_VALUE) else { return false };
-    let found = unsafe { RegQueryValueExW(key, &HSTRING::from(VALUE), None, None, None, None) } == ERROR_SUCCESS;
+    let found = unsafe { RegQueryValueExW(key, &HSTRING::from(value), None, None, None, None) } == ERROR_SUCCESS;
     unsafe {
         let _ = RegCloseKey(key);
     }
     found
 }
 
-/// Add or remove Oumu from the Run key; returns the state after.
-pub fn set(on: bool) -> Result<bool, String> {
+/// `value` names the entry: Oumu's own is "Oumu"; the tests use another so they
+/// never touch the user's (a test binary is not the Oumu to start at sign-in).
+fn set_as(value: &str, on: bool) -> Result<bool, String> {
     let key = open(KEY_SET_VALUE).ok_or("the Run key can't be opened")?;
-    let name = HSTRING::from(VALUE);
+    let name = HSTRING::from(value);
     let res = if on {
         let mut data: Vec<u16> = command()?.encode_utf16().collect();
         data.push(0);
@@ -54,23 +64,25 @@ pub fn set(on: bool) -> Result<bool, String> {
     if res != ERROR_SUCCESS {
         return Err(format!("Windows refused to change the Run key ({})", res.0));
     }
-    Ok(enabled())
+    Ok(enabled_as(value))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Touches the user's real Run key and puts it back as it was.
+    /// A test-only entry: the user's "Oumu" entry is never read or written here.
+    const TEST_VALUE: &str = "OumuUnitTest";
+
     #[test]
-    fn turns_on_and_off_and_restores_the_users_choice() {
-        let before = enabled();
-        assert!(set(true).unwrap());
-        assert!(enabled());
-        assert!(!set(false).unwrap());
-        assert!(!set(false).unwrap(), "turning it off twice is fine");
-        set(before).unwrap();
-        assert_eq!(enabled(), before);
+    fn turns_on_and_off_without_touching_the_users_entry() {
+        let users = enabled();
+        assert!(set_as(TEST_VALUE, true).unwrap());
+        assert!(enabled_as(TEST_VALUE));
+        assert!(!set_as(TEST_VALUE, false).unwrap());
+        assert!(!set_as(TEST_VALUE, false).unwrap(), "turning it off twice is fine");
+        assert!(!enabled_as(TEST_VALUE));
+        assert_eq!(enabled(), users, "the user's own entry is untouched");
     }
 
     #[test]
