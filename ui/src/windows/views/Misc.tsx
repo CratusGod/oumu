@@ -73,6 +73,7 @@ export function SettingsView({ ctx }: { ctx: Ctx }) {
         <div className="section-label">Plagiarism search</div>
         <SearchSettings s={s} setS={setS} save={save} />
         <div className="section-label">App</div>
+        <Autostart />
         <div className="row-actions">{!IS_WINDOWS && <button className="btn btn--outline" onClick={() => ipc.permissionPrompt()}>Accessibility permission</button>}<button className="btn btn--ghost" onClick={() => ipc.quit()}>Quit Oumu</button></div>
       </div>
     </>
@@ -80,6 +81,23 @@ export function SettingsView({ ctx }: { ctx: Ctx }) {
 }
 
 const HINT = { color: "var(--text-subdued)", fontSize: 13, margin: "2px 0 8px" } as const;
+
+/** "Start Oumu with Windows" (shown only where the system has the switch). */
+function Autostart() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { ipc.autostartStatus().then(setOn).catch(() => setOn(null)); }, []);
+  if (on === null) return null;
+  return (
+    <>
+      <label className="kv"><span>Start Oumu with Windows</span><input type="checkbox" checked={on} onChange={(e) => {
+        setError(null);
+        ipc.setAutostart(e.target.checked).then(setOn).catch((err) => setError(String(err)));
+      }} /></label>
+      {error && <p style={HINT}>{error}</p>}
+    </>
+  );
+}
 
 /** Plagiarism search: keyless by default, a SearXNG address or a Brave key for steadier results. */
 function SearchSettings({ s, setS, save }: { s: Settings; setS: (s: Settings) => void; save: (s: Settings) => Promise<void> }) {

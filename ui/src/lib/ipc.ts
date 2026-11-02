@@ -38,6 +38,9 @@ export const ipc = {
   localModels: (baseUrl?: string) => invoke<LocalModels>("local_models", { baseUrl: baseUrl ?? null }),
   probeSearxng: (url: string) => invoke<number>("probe_searxng", { url }),
   quit: () => invoke<void>("quit_app"),
+  /** null where there is no such switch (only Windows has one). */
+  autostartStatus: () => invoke<boolean | null>("autostart_status"),
+  setAutostart: (on: boolean) => invoke<boolean>("set_autostart", { on }),
 };
 
 export function on<T>(event: string, cb: (payload: T) => void): Promise<UnlistenFn> {

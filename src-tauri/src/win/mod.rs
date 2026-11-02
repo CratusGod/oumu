@@ -2,6 +2,7 @@
 //! whose fields cannot be edited through it.
 
 pub mod apply;
+pub mod autostart;
 pub mod ax;
 pub mod clip;
 pub mod remote;

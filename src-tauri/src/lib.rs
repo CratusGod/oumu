@@ -170,6 +170,8 @@ pub fn run() {
             commands::tab_hover,
             commands::highlighted_text,
             commands::take_pending_translation,
+            commands::autostart_status,
+            commands::set_autostart,
             commands::accept_alert,
             commands::dismiss_alert,
             commands::learn_word,

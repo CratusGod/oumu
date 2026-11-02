@@ -545,6 +545,27 @@ pub fn highlighted_text() -> Option<String> {
     None
 }
 
+/// "Start Oumu with Windows": its state, or None where the switch does not exist.
+#[tauri::command]
+pub fn autostart_status() -> Option<bool> {
+    #[cfg(target_os = "windows")]
+    return Some(crate::win::autostart::enabled());
+    #[cfg(not(target_os = "windows"))]
+    None
+}
+
+/// Turn "Start Oumu with Windows" on or off; the state after.
+#[tauri::command]
+pub fn set_autostart(on: bool) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    return crate::win::autostart::set(on);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = on;
+        Err("not on this system".into())
+    }
+}
+
 /// The highlight a `oumu --translate` request left for the Translate view.
 #[tauri::command]
 pub fn take_pending_translation() -> Option<String> {
