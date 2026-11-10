@@ -277,12 +277,16 @@ fn visible_frame(el: &AXElement, frame: Rect) -> Rect {
 
 /// Host loop ticks so far (the debug probe reports them).
 pub static TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// A fullscreen app (a game, a video) was in front at the last tick (Windows only for now).
+static FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn spawn(app: AppHandle, shared: Shared) {
     #[cfg(target_os = "linux")]
     if crate::linux::desktop::kind() == crate::linux::desktop::Kind::Hyprland {
         crate::linux::hyprland::watch_front(crate::pace::wake);
     }
+    #[cfg(target_os = "windows")]
+    crate::win::focus::watch();
     std::thread::Builder::new()
         .name("host-loop".into())
         .spawn(move || {
@@ -307,16 +311,35 @@ pub fn spawn(app: AppHandle, shared: Shared) {
 }
 
 /// Whether the loop has something to watch closely: a document in front, a
-/// pending check, or the panel out. Elsewhere than Linux nothing wakes the
-/// loop early, so it always ticks quickly there.
+/// pending check, or the panel out. Focus events wake the loop early on Linux
+/// and Windows; on macOS nothing does, so it always ticks quickly there.
 fn watching(shared: &Shared) -> bool {
-    if cfg!(not(target_os = "linux")) || !overlay::is_tucked() {
+    // A fullscreen game in front: tick slowly, so Oumu costs it nothing.
+    if FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed) && overlay::is_tucked() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    let woken_by_focus = crate::win::focus::is_watching();
+    #[cfg(target_os = "linux")]
+    let woken_by_focus = true;
+    #[cfg(target_os = "macos")]
+    let woken_by_focus = false;
+    if !woken_by_focus || !overlay::is_tucked() {
         return true;
     }
     shared
         .lock()
-        .map(|st| st.doc.as_ref().is_some_and(|d| d.active) || st.lint_dirty || st.spot_dirty || st.spot_running)
+        .map(|st| busy(st.doc.as_ref().map(|d| d.active), st.lint_dirty, st.spot_running))
         .unwrap_or(true)
+}
+
+/// The quick tick is needed while a field is in front (`doc` = Some(true)), a
+/// spot check is out, or a lint is due on a document still held. A pending
+/// spot check is not enough on its own: it only runs for a field in front, so
+/// once that field loses focus its flag stays set, and counting it kept the
+/// loop busy for good after typing something and switching away.
+fn busy(doc: Option<bool>, lint_dirty: bool, spot_running: bool) -> bool {
+    doc == Some(true) || spot_running || (lint_dirty && doc.is_some())
 }
 
 /// Underline boxes from the last full placement. Placing them asks the app
@@ -421,6 +444,15 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let ours = ours || front_pid == std::process::id() as i32 || ax::focus_is_ours();
 
+    // A fullscreen game or video in front: no UI Automation calls into it (they
+    // run inside its process and cost it frames) and no overlays on top of it
+    // (a topmost window over a fullscreen game makes Windows composite every frame).
+    #[cfg(target_os = "windows")]
+    let fullscreen = !ours && ax::front_is_fullscreen();
+    #[cfg(not(target_os = "windows"))]
+    let fullscreen = false;
+    FULLSCREEN.store(fullscreen, std::sync::atomic::Ordering::Relaxed);
+
     // An open panel keeps the keyboard (for Esc) only while the pointer is on
     // it. (The edge tab follows the pointer on its own thread, see overlay.rs.)
     if !overlay::is_tucked() {
@@ -438,7 +470,7 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
 
     // 1. Resolve the focused editable element (unless we are in front: keep the last one).
     let mut focused: Option<(AXElement, String)> = None;
-    if trusted && !ours && !paused && !skipped {
+    if trusted && !ours && !paused && !skipped && !fullscreen {
         if let Some(el) = system.focused_element() {
             let role = el.role().unwrap_or_default();
             if el.pid() != std::process::id() as i32 && is_editable(&el, &role) {
@@ -633,6 +665,9 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
     }
 
     // 4. Geometry + overlays.
+    if fullscreen {
+        clear_overlays = true;
+    }
     let (doc, element, alerts, show_button, show_underlines, card_rects) = {
         let st = shared.lock().unwrap();
         (st.doc.clone(), st.element.clone(), st.alerts.clone(), st.settings.show_button, st.settings.show_underlines, st.card_rects.clone())
@@ -747,6 +782,11 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
         let side = shared.lock().unwrap().settings.dock_side.clone();
         crate::overlay::fullscreen_guard(app, &side, fullscreen);
     }
+    #[cfg(target_os = "windows")]
+    {
+        let side = shared.lock().unwrap().settings.dock_side.clone();
+        crate::overlay::fullscreen_guard(app, &side, fullscreen);
+    }
 
     // 5. Status (only when changed).
     let status = shared.lock().unwrap().status.clone();
@@ -831,6 +871,16 @@ fn rects_for_range(el: &AXElement, loc: usize, len: usize) -> Vec<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loop_rests_once_the_field_is_gone() {
+        assert!(busy(Some(true), false, false), "a field in front");
+        assert!(busy(None, false, true), "a spot check still out");
+        assert!(busy(Some(false), true, false), "a lint due on the held document");
+        assert!(!busy(Some(false), false, false), "field lost focus, nothing pending");
+        assert!(!busy(None, false, false), "no document at all");
+        assert!(!busy(None, true, false), "a stale lint flag without a document");
+    }
 
     #[test]
     fn terminals_are_skipped_and_the_user_list_adds_apps() {

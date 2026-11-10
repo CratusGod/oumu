@@ -682,6 +682,48 @@ fn window_pid(hwnd: HWND) -> i32 {
     pid as i32
 }
 
+/// Whether the window in front fills its whole monitor: a game or video in
+/// fullscreen, exclusive or borderless. Oumu's own windows, the desktop and
+/// maximized windows (which can cover the screen when the taskbar auto-hides)
+/// do not count. Plain Win32 calls, cheap enough for every host tick; unlike
+/// UI Automation they never ask the game's process anything.
+pub fn front_is_fullscreen() -> bool {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL};
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowRect, IsZoomed};
+    let hwnd = front_window();
+    if hwnd.0.is_null() || window_pid(hwnd) == std::process::id() as i32 || unsafe { IsZoomed(hwnd) }.as_bool() {
+        return false;
+    }
+    let mut cls = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut cls) };
+    let cls = String::from_utf16_lossy(&cls[..n.max(0) as usize]);
+    if is_shell_class(&cls) {
+        return false;
+    }
+    let mut win = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut win) }.is_err() {
+        return false;
+    }
+    let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) };
+    if mon.is_invalid() {
+        return false;
+    }
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    if !unsafe { GetMonitorInfoW(mon, &mut info) }.as_bool() {
+        return false;
+    }
+    covers_monitor(&win, &info.rcMonitor)
+}
+
+/// The desktop and taskbar fill the screen too, but are no fullscreen app.
+fn is_shell_class(class: &str) -> bool {
+    matches!(class, "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+}
+
+fn covers_monitor(win: &RECT, mon: &RECT) -> bool {
+    win.left <= mon.left && win.top <= mon.top && win.right >= mon.right && win.bottom >= mon.bottom
+}
+
 fn exe_name(pid: i32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, false, pid as u32).ok()?;
@@ -820,6 +862,22 @@ mod tests {
         assert!(is_trusted());
         // Something always has focus on a desktop session (at worst the shell).
         assert!(AXElement::system_wide().focused_element().is_some());
+    }
+
+    #[test]
+    fn a_window_counts_as_fullscreen_only_when_it_covers_the_monitor() {
+        let mon = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+        assert!(covers_monitor(&mon, &mon), "borderless fullscreen");
+        assert!(covers_monitor(&RECT { left: -1, top: -1, right: 1921, bottom: 1081 }, &mon));
+        // A maximized window above the taskbar stops short of the bottom.
+        assert!(!covers_monitor(&RECT { left: -8, top: -8, right: 1928, bottom: 1048 }, &mon));
+        assert!(!covers_monitor(&RECT { left: 100, top: 100, right: 900, bottom: 700 }, &mon));
+        // Second monitor to the right.
+        let right = RECT { left: 1920, top: 0, right: 4480, bottom: 1440 };
+        assert!(covers_monitor(&right, &right));
+        assert!(!covers_monitor(&mon, &right));
+        assert!(is_shell_class("Progman") && is_shell_class("WorkerW") && is_shell_class("Shell_TrayWnd"));
+        assert!(!is_shell_class("SDL_app") && !is_shell_class("Chrome_WidgetWin_1"));
     }
 
     #[test]

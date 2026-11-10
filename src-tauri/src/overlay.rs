@@ -238,7 +238,7 @@ pub fn set_tucked(app: &AppHandle, side: &str, tucked: bool, animate: bool, focu
 /// The edge tab is drawn on the overlay layer, above everything, so it would
 /// sit on top of a fullscreen game or video. Hide it while a fullscreen window
 /// is in front and bring it back after (only if the panel is still tucked).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub fn fullscreen_guard(app: &AppHandle, side: &str, fullscreen: bool) {
     static HIDDEN: AtomicBool = AtomicBool::new(false);
     if fullscreen == HIDDEN.load(Ordering::SeqCst) {
