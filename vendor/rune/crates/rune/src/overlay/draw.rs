@@ -127,6 +127,11 @@ impl<T: 'static> Overlay<T> {
             if self.pace_until.is_some_and(|t| now < t) { return false; }
             self.pace_until = Some(now + crate::window::TIMER_FRAME);
         }
+        // cratus-rs patch: RUNE_OVERLAY_FPS=1 prints overlay draws per second (all overlays),
+        // to see whether a platform needs the pacing above
+        if !prewarm {
+            overlay_fps_tick();
+        }
         let (Some(live), Some(renderer), Some(gpu)) = (self.surface.live_mut(), self.renderer.as_mut(), self.gpu.as_ref()) else {
             return false;
         };
@@ -411,5 +416,24 @@ impl<T: 'static> Overlay<T> {
         }, &mut self.compositor);
         renderer.submit(&gpu.queue, enc);
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+}
+
+/// cratus-rs patch: counts overlay draws and prints the rate once a second when
+/// `RUNE_OVERLAY_FPS` is set (a measuring aid; off otherwise).
+fn overlay_fps_tick() {
+    use std::sync::Mutex;
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static STATE: Mutex<Option<(std::time::Instant, u32)>> = Mutex::new(None);
+    if !*ON.get_or_init(|| std::env::var_os("RUNE_OVERLAY_FPS").is_some()) {
+        return;
+    }
+    let mut st = STATE.lock().unwrap();
+    let now = std::time::Instant::now();
+    let (start, n) = st.get_or_insert((now, 0));
+    *n += 1;
+    if now.duration_since(*start).as_secs_f32() >= 1.0 {
+        eprintln!("rune: overlay draws/s {}", *n);
+        *st = Some((now, 0));
     }
 }

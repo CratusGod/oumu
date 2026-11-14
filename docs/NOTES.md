@@ -148,3 +148,51 @@ folder), OUMU_E2E (logs the card's Accept point), OUMU_THEME (headless), OUMU_E2
 
 ## Disk
 `[profile.dev]` has no debug info and no incremental cache: the first build was 27 GB.
+
+## Linux port (2026-11-15, branch `linux-port`)
+Target: Arch (CachyOS kernel) + Hyprland 0.57 (Wayland), Ryoku desktop, NVIDIA (Vulkan).
+The Windows code is unchanged in behaviour but now sits behind `cfg(windows)`; **the
+Windows build was not compiled from Linux** (no Windows target here): build it on Windows
+before merging.
+
+- **Build:** Arch's `rust` 1.99.1 matches `rust-toolchain.toml`. `windows`/`winreg`/
+  `embed-resource` are `cfg(windows)` deps; `install`, `setup` and the Windows half of
+  `utsuri-e2e` compile to stubs elsewhere. Build scripts skip resources off Windows.
+- **Engine:** `winrt.rs` → `linux_codec.rs` (same API): PDF pages via poppler `pdftoppm`
+  (it opens AES-256 files with `-upw`), HEIC/AVIF decode/encode via libheif's `heif-dec` /
+  `heif-enc` (x265, dav1d/aom on this box). `fonts.rs`: Windows font names map to
+  fontconfig (Noto Sans / DejaVu, Vietnamese OK). `proc.rs`: `Quiet::quiet()`/`detached()`
+  replace `creation_flags`. Free space via `statvfs`. XDG paths: settings
+  `~/.config/Utsuri-rs`, log/state `~/.local/state/Utsuri-rs` (`shared::paths`).
+- **Utsuri trigger:** evdev (`linux/keys.rs`, one reader thread per keyboard/mouse,
+  hot-plug rescan every 2 s, ydotool's virtual device included) + pointer from Hyprland IPC
+  (`cursorpos`, asked only while the button is down). Needs the `input` group; without it
+  Utsuri shows a toast saying so. **The Ryoku Utsuri plugin also answers Shift+drag**
+  (user.lua UTSURI-TRIGGER): both menus open. Tests use Ctrl.
+- **Drops on the menu (Wayland):** Rune's layer-shell overlays don't do DnD, so
+  `linux/dnd.rs` maps an invisible layer surface (own Wayland connection, `wl_data_device`)
+  over the menu while it shows in drag mode. Files arrive on enter (rings follow) and on
+  drop. Race found in E2E: the button-up (evdev) beat the drop's data, and the 120 ms grace
+  hid the catcher first; now events are handled before hide commands, reads run on their
+  own thread, and `Drag::Dropping` holds the menu up to 3 s for the files.
+- **Rune patch:** `OverlayPlacement::Rect` layer surfaces set exclusive zone -1. With 0,
+  Hyprland measured the margins from inside the bar's reserved zone: every placed overlay
+  (Oumu underlines, Utsuri menu) sat 39 px low. `RUNE_OVERLAY_FPS=1` prints overlay
+  draws/s (measuring aid for the Windows-only pacing).
+- **Hyprland 0.57 here only takes Lua dispatches** (`hl.dsp.window.move({...})`); the
+  legacy `dispatch movewindowpixel ...` form is refused.
+- **Oumu:** the original Tauri Oumu's `src-tauri/src/linux/` (AT-SPI, Hyprland, PRIMARY
+  selection, socket) copied in minus `layer.rs` (GTK). Windows go through `wm::plain`; the
+  panel is a normal Rune window floated, pinned and moved by address through Hyprland
+  (`ui::place_panel_hyprland`, user drags reported back); tab/button/card/underlines are
+  Rune layer-shell overlays (`ui/strips_rune.rs` replaces the GDI strips). Log:
+  `~/.local/state/oumu/oumu.log`; autostart: XDG `~/.config/autostart`. `OUMU_SOCK` moves
+  the socket for tests. At launch the a11y bus is switched back on when consent was saved.
+- **Tests (Linux):** `cargo test --workspace`; `python3 tests/linux/headless.py`
+  (Utsuri 67, Oumu 88; checks are case-insensitive like PowerShell's `-like`);
+  `cargo run -p utsuri-e2e` (Linux driver: GTK drag source + ydotool, workspace 9, Ctrl);
+  `python3 tests/linux/oumu_e2e.py [--no-ai]` (GTK3 editor, ydotool hover/click, AT-SPI
+  panel buttons, Chromium PRIMARY highlight via a real triple-click: script-made
+  selections don't set PRIMARY on Wayland).
+- **Install:** `packaging/linux/install.sh` (~/.local/bin, icons, app entries, Dolphin
+  service menu); `uninstall.sh`.
