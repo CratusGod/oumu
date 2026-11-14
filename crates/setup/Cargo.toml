@@ -7,8 +7,10 @@ publish.workspace = true
 description = "Utsuri-Setup.exe and Oumu-Setup.exe (they carry the release builds)"
 
 [dependencies]
-install = { path = "../install" }
 anyhow.workspace = true
 
 [build-dependencies]
 embed-resource = "3"
+
+[target.'cfg(windows)'.dependencies]
+install = { path = "../install" }

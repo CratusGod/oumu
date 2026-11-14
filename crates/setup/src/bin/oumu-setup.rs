@@ -1,7 +1,9 @@
 //! Oumu-Setup.exe: installs Oumu for this user (no admin rights).
-#![windows_subsystem = "windows"]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
-fn main() {
+#[cfg(windows)]
+mod app {
+pub fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let o = install::Opts::from_args(&args);
     let payload = include_bytes!(env!("OUMU_PAYLOAD"));
@@ -19,4 +21,17 @@ fn main() {
             install::tell("Oumu setup", &format!("Setup didn't finish:\n\n{e:#}"), true);
         }
     }
+}
+
+}
+
+#[cfg(windows)]
+fn main() {
+    app::main()
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("This tool is Windows-only; see tests/linux for the Linux harness.");
+    std::process::exit(2);
 }

@@ -8599,6 +8599,7 @@ dependencies = [
  "img-parts",
  "kamadak-exif",
  "krilla",
+ "libc",
  "liblzma",
  "log",
  "lopdf",

@@ -4,6 +4,7 @@
 //!
 //! `suffix` (e.g. " (test)") and `dir` make a sandboxed install for tests: every name it
 //! writes carries the suffix, so the real install and the old apps are never touched.
+#![cfg(windows)]
 
 use anyhow::{Context as _, Result, bail};
 use std::os::windows::process::CommandExt;

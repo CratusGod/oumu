@@ -3,6 +3,9 @@
 // they embed an empty placeholder, so the workspace still builds, and such a setup refuses to
 // run and says what to build first.
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release");
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     for (var, exe) in [("UTSURI_PAYLOAD", "utsuri.exe"), ("OUMU_PAYLOAD", "oumu.exe")] {
