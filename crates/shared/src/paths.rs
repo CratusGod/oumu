@@ -101,3 +101,28 @@ mod tests {
         assert_eq!(human_size(2_516_582), "2.4 MB");
     }
 }
+
+/// Where an app keeps its settings: %APPDATA%\<app> on Windows, $XDG_CONFIG_HOME/<app>
+/// (~/.config/<app>) elsewhere.
+pub fn config_dir(app: &str) -> PathBuf {
+    platform_dir("APPDATA", "XDG_CONFIG_HOME", ".config").join(app)
+}
+
+/// Where an app keeps its logs and small state: %LOCALAPPDATA%\<app> on Windows,
+/// $XDG_STATE_HOME/<app> (~/.local/state/<app>) elsewhere.
+pub fn state_dir(app: &str) -> PathBuf {
+    platform_dir("LOCALAPPDATA", "XDG_STATE_HOME", ".local/state").join(app)
+}
+
+fn platform_dir(win: &str, xdg: &str, fallback: &str) -> PathBuf {
+    let var = if cfg!(windows) { win } else { xdg };
+    if let Some(d) = std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute()) {
+        return d;
+    }
+    if !cfg!(windows) {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(fallback);
+        }
+    }
+    std::env::temp_dir()
+}
