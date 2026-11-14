@@ -433,6 +433,20 @@ impl RectCache {
     }
 }
 
+/// The element last focused in another app (not a skipped one), kept while Oumu is in front:
+/// "Translate highlighted text" in the panel reads the highlight from it.
+static LAST_FOREIGN: std::sync::Mutex<Option<AXElement>> = std::sync::Mutex::new(None);
+
+fn remember_foreign(el: &AXElement) {
+    if let Ok(mut g) = LAST_FOREIGN.lock() {
+        *g = Some(el.clone());
+    }
+}
+
+pub fn last_foreign() -> Option<AXElement> {
+    LAST_FOREIGN.lock().ok()?.clone()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engine, last_geom_sig: &mut String, last_status_sig: &mut String, rects: &mut RectCache) {
     let trusted = ax::is_trusted();
@@ -473,8 +487,12 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
     if trusted && !ours && !paused && !skipped && !fullscreen {
         if let Some(el) = system.focused_element() {
             let role = el.role().unwrap_or_default();
-            if el.pid() != std::process::id() as i32 && is_editable(&el, &role) {
-                focused = Some((el, role));
+            if el.pid() != std::process::id() as i32 {
+                // any element, for "translate what I highlighted" after Oumu took the focus
+                remember_foreign(&el);
+                if is_editable(&el, &role) {
+                    focused = Some((el, role));
+                }
             }
         }
     }

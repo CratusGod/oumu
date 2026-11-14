@@ -13,7 +13,8 @@ fn body(name: &str) -> &'static str {
         "incognito" => r#"<path d="M3 11h18"/><path d="M6.5 11l1.8-5.2A1.5 1.5 0 0 1 9.7 5h4.6a1.5 1.5 0 0 1 1.4.8L17.5 11"/><circle cx="8" cy="16" r="2.6"/><circle cx="16" cy="16" r="2.6"/><path d="M10.6 16h2.8"/>"#,
         "tone" => r#"<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5z"/><path d="M7.5 10.5l1.5-2 1.5 4 1.5-5 1.5 5 1.5-3 1.5 1"/>"#,
         "target" => r#"<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>"#,
-        "paraphrase" => r#"<path d="M17 4.5A8 8 0 0 0 4.6 9.2"/><path d="M4 5v4.5h4.5"/><path d="M7 19.5a8 8 0 0 0 12.4-4.7"/><path d="M20 19v-4.5h-4.5"/><path d="M14.5 10.5l2 2-4.5 4.5H10v-2z"/>"#,
+        // two arrows trading places (Lucide "repeat", ISC); the old loop with a pencil inside was a muddle at 18 px
+        "paraphrase" => r#"<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>"#,
         "heart" => r#"<path d="M12 20s-7.5-4.6-7.5-10A4.2 4.2 0 0 1 12 7.4 4.2 4.2 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>"#,
         "book" => r#"<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H5.5A1.5 1.5 0 0 1 4 15.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H14a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h4.5a1.5 1.5 0 0 0 1.5-1.5z"/><path d="M12 6V3"/>"#,
         "translate" => r#"<path d="M3 6h9"/><path d="M7.5 3.5V6"/><path d="M10.5 6c-.8 4-3.6 7-7 8.5"/><path d="M5 9c1.2 2.6 3.3 4.7 6 5.5"/><path d="M13 20l4-9 4 9"/><path d="M14.3 17h5.4"/>"#,
@@ -42,7 +43,8 @@ fn body(name: &str) -> &'static str {
         "quill" => r#"<path d="M19 4c-6 0-10 4-11 10l-3 6"/><path d="M8 14h3c4 0 7-3 8-10z"/>"#,
         "sparkle" => r#"<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z" fill="currentColor" stroke="none"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" fill="currentColor" stroke="none"/>"#,
         "close" => r#"<path d="M6 6l12 12"/><path d="M18 6L6 18"/>"#,
-        "gear" => r#"<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>"#,
+        // a toothed cog (Lucide "settings", ISC); the old rays read as a sun
+        "gear" => r#"<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>"#,
         _ => r#"<path d="M14.5 4.5l5 5L8 21H3v-5z"/><path d="M12.5 6.5l5 5"/>"#, // pencil
     }
 }

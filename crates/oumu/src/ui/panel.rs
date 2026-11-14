@@ -223,6 +223,11 @@ impl PanelS {
             let r = crate::commands::run_feature_inner(&app, &shared, &name, args).await;
             if let Some(me) = me {
                 me.update(move |s, _| {
+                    // one line per finished tool: the panel E2E waits for it
+                    match &r {
+                        Ok(_) => log::info!("panel: {name} done ok"),
+                        Err(e) => log::info!("panel: {name} done error: {}", e.chars().take(160).collect::<String>()),
+                    }
                     let f = s.feats.entry(key).or_default();
                     f.loading = false;
                     match r {
@@ -280,6 +285,7 @@ impl PanelS {
     pub fn translate_pending(&mut self) {
         self.view = "translate".into();
         let text = crate::commands::take_pending_translation().or_else(crate::commands::highlighted_text);
+        log::info!("translate: {} characters highlighted", text.as_deref().map_or(0, |t| t.trim().chars().count()));
         match text {
             Some(t) if !t.trim().is_empty() => {
                 self.tr_highlight = true;
@@ -651,7 +657,7 @@ fn str_of(v: &Value, k: &str) -> String {
 
 /// .list-opt
 fn list_opt(key: &str, selected: bool, k: &Tok) -> El {
-    let e = col().key(key).w_full().radius(12.0).px(18.0).py(16.0).mb(10.0).border(1.0, c(k.border)).hover(c(k.subdued)).cursor(rune::Cursor::Pointer);
+    let e = col().key(key).w_full().radius(12.0).px(18.0).py(16.0).mb(10.0).border(1.0, c(k.border)).hover(c(k.subdued)).cursor(rune::Cursor::Pointer).role("button");
     if selected { e.fill(c(k.subdued)) } else { e }
 }
 
@@ -674,7 +680,7 @@ fn paraphraser(s: &S, m: &Model) -> El {
         for st in STYLES {
             let sel = s.para_style.as_deref() == Some(*st);
             let st_s = st.to_string();
-            c_ = c_.child(list_opt(&format!("style/{st}"), sel, k).child(t(*st, 16.0, k.text)).on_press(move |s: &mut S| {
+            c_ = c_.child(list_opt(&format!("style/{st}"), sel, k).label(*st).child(t(*st, 16.0, k.text)).on_press(move |s: &mut S| {
                 s.para_style = Some(st_s.clone());
                 s.run("paraphrase", "paraphrase", json!({ "style": st_s }));
             }));
@@ -693,7 +699,7 @@ fn voice_card(key: &str, glyph: &str, name: &str, desc: &str, new: bool, k: &Tok
         inner = inner.child(row().child(row().radius(10.0).px(8.0).py(2.0).mb(8.0).fill(c(k.brand_chip())).child(tb("New", 12.0, k.brand_chip_ink()))));
     }
     inner = inner.child(row().gap(14.0).items_center().child(row().size(48.0, 48.0).radius(24.0).center().fill(c(k.purple_chip())).child(icon(glyph, k.purple_chip_ink(), 24.0))).child(col().grow(1.0).min_w(0.0).child(tb(name, 16.0, k.text)).child(p(desc, 14.0, k.text_subdued))));
-    card(inner, k).key(key).mb(10.0).cursor(rune::Cursor::Pointer).hover(c(k.bg_hover()))
+    card(inner, k).key(key).mb(10.0).cursor(rune::Cursor::Pointer).hover(c(k.bg_hover())).role("button").label(name)
 }
 
 fn humanizer(s: &S, m: &Model, st: &crate::settings::Settings) -> El {
@@ -785,7 +791,7 @@ fn reactions(s: &S, m: &Model, st: &crate::settings::Settings) -> El {
         for (n, d) in all {
             let sel = n == s.aud.0;
             let (n2, d2) = (n.clone(), d.clone());
-            box_ = box_.child(list_opt(&format!("aud/{n}"), sel, k).child(t(n, 16.0, k.text)).child(p(d, 13.0, k.text_subdued)).on_press(move |s: &mut S| {
+            box_ = box_.child(list_opt(&format!("aud/{n}"), sel, k).label(n.clone()).child(t(n, 16.0, k.text)).child(p(d, 13.0, k.text_subdued)).on_press(move |s: &mut S| {
                 s.aud = (n2.clone(), d2.clone());
                 s.aud_picking = false;
                 run_reactions(s);
@@ -1296,7 +1302,7 @@ fn chat(s: &S, m: &Model, st: &crate::settings::Settings) -> El {
         let t = s.chat_input.text.clone();
         send_chat(s, t);
     }).build(&s.kit).key("chat-input").w_full();
-    let send = row().key("send").size(36.0, 36.0).radius(18.0).center().fill(c(if can_send { k.brand_strong } else { k.brand_subdued() })).cursor(rune::Cursor::Pointer).child(icon("arrow-up", if can_send { k.on_brand } else { k.text_muted }, 20.0));
+    let send = row().key("send").size(36.0, 36.0).radius(18.0).center().role("button").label("Send").fill(c(if can_send { k.brand_strong } else { k.brand_subdued() })).cursor(rune::Cursor::Pointer).child(icon("arrow-up", if can_send { k.on_brand } else { k.text_muted }, 20.0));
     let send = if can_send {
         send.on_press(|s: &mut S| {
             let t = s.chat_input.text.clone();
@@ -1338,6 +1344,7 @@ fn send_chat(s: &mut S, text: String) {
         let r = crate::commands::chat_send(app.clone(), app.state::<Shared>(), id, Value::Array(messages)).await;
         if let (Err(e), Some(me)) = (r, me) {
             me.update(move |s, _| {
+                log::info!("panel: chat done error: {}", e.chars().take(160).collect::<String>());
                 if let Some(last) = s.chat.last_mut() {
                     *last = ("assistant".into(), format!("Error: {e}"), false);
                 }
@@ -1360,6 +1367,11 @@ pub fn chat_chunk(s: &mut S, req: &str, delta: &str, done: bool, error: Option<S
         last.2 = !done;
     }
     if done {
+        let reply = s.chat.last().map(|l| l.1.trim().to_string()).unwrap_or_default();
+        match &error {
+            Some(e) => log::info!("panel: chat done error: {}", e.chars().take(160).collect::<String>()),
+            None => log::info!("panel: chat done ok, {} chars", reply.chars().count()),
+        }
         s.chat_req = None;
     }
 }

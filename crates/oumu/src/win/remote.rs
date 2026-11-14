@@ -155,11 +155,27 @@ fn parse_request(buf: &[u8]) -> Option<Request> {
 
 /// The text selected in the app in front, through UI Automation.
 pub fn highlighted_text() -> Option<String> {
-    let el = crate::ax::AXElement::system_wide().focused_element()?;
-    let text = el.string("AXValue")?;
-    let (start, len) = el.range("AXSelectedTextRange")?;
-    let sel = crate::textmap::slice_utf16(&text, start, start + len);
-    (!sel.trim().is_empty()).then_some(sel)
+    // the focused element, unless it is Oumu's own panel (a click on "Translate highlighted
+    // text" moved the focus there): then the element last focused in another app
+    let own = std::process::id() as i32;
+    let focused = crate::ax::AXElement::system_wide().focused_element().filter(|e| e.pid() != own);
+    let candidates = [focused, crate::host::last_foreign()];
+    for el in candidates.into_iter().flatten() {
+        if let Some(sel) = selected_in(&el) {
+            return Some(sel);
+        }
+    }
+    None
+}
+
+/// The highlight in `el`: in its own text (a text box), else in the nearest ancestor with a
+/// selection (a web page or chat transcript: Chromium and Electron apps, browsers).
+fn selected_in(el: &crate::ax::AXElement) -> Option<String> {
+    let in_field = el.string("AXValue").and_then(|text| {
+        let (start, len) = el.range("AXSelectedTextRange")?;
+        Some(crate::textmap::slice_utf16(&text, start, start + len))
+    });
+    in_field.filter(|s| !s.trim().is_empty()).or_else(|| el.selection_up(12)).filter(|s| !s.trim().is_empty())
 }
 
 /// Read the selection, open the panel on Translate and hand the text over.

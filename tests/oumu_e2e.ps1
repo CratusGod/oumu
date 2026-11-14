@@ -171,6 +171,23 @@ try {
   $second.WaitForExit(10000) | Out-Null
   $p = WaitFor 8 { $s = Api "/state"; if ($s.panel.visible -and -not $s.panel.tucked) { $s.panel } }
   Check "a second launch opens the running Oumu's panel" $p "x=$($p.x) y=$($p.y)"
+  # it slides all the way out (a tuck mid-slide once left it opening half off screen)
+  Start-Sleep -Milliseconds 600
+  $scr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $sc = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $px = (Api "/state").panel.x
+  Check "the panel opens fully on screen" ($px -ge -1 -and $px -lt $scr.Width) "x=$px"
+  # tuck it at once and open it again: it must still open fully
+  Api "/panel" @{ tucked = $true } | Out-Null
+  Start-Sleep -Milliseconds 50
+  Api "/panel" @{ tucked = $false } | Out-Null
+  Start-Sleep -Milliseconds 120
+  Api "/panel" @{ tucked = $true } | Out-Null
+  Start-Sleep -Milliseconds 600
+  Api "/panel" @{ tucked = $false } | Out-Null
+  Start-Sleep -Milliseconds 900
+  $px = (Api "/state").panel.x
+  Check "a tuck mid-slide doesn't leave it half open" ($px -ge -1 -and $px -lt $scr.Width) "x=$px"
   Api "/panel" @{ tucked = $true } | Out-Null
   $t = WaitFor 5 { $s = Api "/state"; if ($s.panel.tucked -and $s.panel.tab_visible) { $true } }
   Check "tucking hides the panel behind the edge tab" $t ""
@@ -209,6 +226,96 @@ try {
         Check ("AI " + $f.n) $false $msg.Substring(0, [Math]::Min(160, $msg.Length))
       }
     }
+
+    # --- every tool from the panel itself: open its view, press its button through UI
+    # Automation (no mouse), wait for the panel's "done" line in the log
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    function Find-Named($procId, $name) {
+      $root = [System.Windows.Automation.AutomationElement]::RootElement
+      $pc = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ProcessIdProperty), $procId
+      $nc = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty), $name
+      foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $pc)) {
+        $e = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nc)
+        if ($e) { return $e }
+      }
+      return $null
+    }
+    function Press($procId, $name) {
+      $e = WaitFor 8 { Find-Named $procId $name }
+      if (-not $e) { return $false }
+      $ip = $null
+      if ($e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) { $ip.Invoke(); return $true }
+      return $false
+    }
+    function LogMark() { @(Get-Content $log -ErrorAction SilentlyContinue).Count }
+    function WaitLog($mark, $pattern, $secs) {
+      WaitFor $secs { @(Get-Content $log -ErrorAction SilentlyContinue) | Select-Object -Skip $mark | Where-Object { $_ -match $pattern } | Select-Object -Last 1 }
+    }
+    foreach ($t in @(
+      @{ view = "paraphraser"; press = "Professional"; feature = "paraphrase" },
+      @{ view = "humanizer"; press = "The Naturalist"; feature = "humanize" },
+      @{ view = "translate"; press = "Translate all"; feature = "translate" },
+      @{ view = "explain"; press = "Explain the whole page"; feature = "explain" },
+      @{ view = "detector"; press = "Check this text"; feature = "detector" },
+      @{ view = "reactions"; press = "Predict reactions"; feature = "reactions" },
+      @{ view = "tone"; press = "Reload"; feature = "tone" },
+      @{ view = "chat"; press = "Summarize this page"; feature = "chat" }
+    )) {
+      Start-Sleep -Seconds 5  # a free key's per-minute limit
+      $mark = LogMark
+      Api "/panel" @{ view = $t.view; focus = $false } | Out-Null
+      Start-Sleep -Milliseconds 800
+      # every button on the view has a name a screen reader can say
+      $bc = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ControlTypeProperty), ([System.Windows.Automation.ControlType]::Button)
+      $pc = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ProcessIdProperty), $oumu.Id
+      $unnamed = 0
+      foreach ($w in [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $pc)) {
+        foreach ($b in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bc)) { if (-not $b.Current.Name.Trim()) { $unnamed++ } }
+      }
+      Check ("buttons named: " + $t.view) ($unnamed -eq 0) "$unnamed without a name"
+      $pressed = Press $oumu.Id $t.press
+      $done = if ($pressed) { WaitLog $mark ("panel: " + $t.feature + " done") 150 } else { $null }
+      $line = if ($done) { ($done -replace '^.*panel: ', '') } elseif ($pressed) { "no answer in 150 s" } else { "button '$($t.press)' not found" }
+      $line = $line -replace 'AIza[0-9A-Za-z_-]{10,}', '***' -replace 'AQ.[0-9A-Za-z_.-]{10,}', '***'
+      Check ("panel " + $t.view) ($done -and $done -match "done ok") $line.Substring(0, [Math]::Min(140, $line.Length))
+    }
+    Api "/panel" @{ tucked = $true } | Out-Null
+
+    # --- a highlight outside any text box (a web page in a Chromium app, like Claude's chat or
+    # a browser): `oumu --translate` must translate exactly the highlighted sentence
+    $sentence = "The weather is lovely today, so we are going for a long walk by the river."
+    $page = Join-Path $run "highlight.html"
+    "<!doctype html><meta charset=utf-8><title>Oumu highlight test</title><body style='font:20px sans-serif;padding:40px'><p>Some text before.</p><p id=t>$sentence</p><p>Some text after.</p><script>onload=()=>{const r=document.createRange();r.selectNodeContents(document.getElementById('t'));const s=getSelection();s.removeAllRanges();s.addRange(r);}</script>" | Out-File -Encoding utf8 $page
+    $browser = @("$env:LOCALAPPDATA\imput\Helium\Application\chrome.exe", "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($browser) {
+      # a throwaway profile: the user's own browser profile is never touched
+      $prof = Join-Path $run "browser-profile"
+      $br = Start-Process $browser -ArgumentList "--user-data-dir=`"$prof`"", "--no-first-run", "--no-default-browser-check", "--force-renderer-accessibility", "--app=file:///$($page -replace '\\','/')" -PassThru
+      try {
+        $ready = WaitFor 20 { $w = Get-Process -Id $br.Id -ErrorAction SilentlyContinue; Get-CimInstance Win32_Process -Filter "Name='$(Split-Path $browser -Leaf)'" | Where-Object { $_.CommandLine -like "*$prof*" } | Select-Object -First 1 }
+        Start-Sleep -Seconds 3
+        $mark = LogMark
+        $p2 = Start-Oumu "--translate"
+        $got = WaitLog $mark "translate: [0-9]+ characters highlighted" 15
+        $n = if ($got -match "translate: ([0-9]+) characters") { [int]$Matches[1] } else { -1 }
+        Check "highlight on a web page is read" ($n -eq $sentence.Length) "$n characters (the sentence has $($sentence.Length))"
+        $done = WaitLog $mark "panel: translate done" 150
+        Check "highlight on a web page is translated" ($done -and $done -match "done ok") $(if ($done) { ($done -replace '^.*panel: ', '') } else { "no answer" })
+        # the panel's own button reads the same highlight after Oumu took the focus
+        Start-Sleep -Seconds 5
+        $mark = LogMark
+        Api "/panel" @{ view = "translate"; focus = $true } | Out-Null
+        Start-Sleep -Milliseconds 800
+        # the view still shows the first translation: back to its start screen
+        if (Find-Named $oumu.Id "Back") { Press $oumu.Id "Back" | Out-Null; Start-Sleep -Milliseconds 500 }
+        $pressed = Press $oumu.Id "Translate highlighted text"
+        $got = if ($pressed) { WaitLog $mark "translate: [0-9]+ characters highlighted" 15 } else { $null }
+        $n = if ($got -match "translate: ([0-9]+) characters") { [int]$Matches[1] } else { -1 }
+        Check "panel button reads the highlight" ($n -eq $sentence.Length) $(if ($pressed) { "$n characters" } else { "button not found" })
+      } finally {
+        Get-CimInstance Win32_Process -Filter "Name='$(Split-Path $browser -Leaf)'" | Where-Object { $_.CommandLine -like "*$prof*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      }
+    } else { Check "highlight on a web page" $false "no Chromium browser found to test with" }
   } else { Check "AI tools" $true "skipped (no AI key set up)" }
 } finally {
   if ($ed -and -not $ed.HasExited) { Stop-Process -Id $ed.Id -Force }

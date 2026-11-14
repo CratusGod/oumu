@@ -161,6 +161,12 @@ fn offscreen_x(app: &AppHandle, side: &str) -> f64 {
     if side == "right" { mx + mw + 24.0 } else { mx - PANEL_W - 24.0 }
 }
 
+/// Whether a panel at `x` shows whole on the primary display.
+fn on_screen(app: &AppHandle, x: f64) -> bool {
+    let (mx, _, mw, _) = primary_logical(app);
+    x >= mx - 1.0 && x + PANEL_W <= mx + mw + 1.0
+}
+
 fn slide(app: &AppHandle, from: f64, to: f64, y: f64, gen: u64) -> bool {
     for i in 1..=SLIDE_STEPS {
         if ANIM_GEN.load(Ordering::SeqCst) != gen {
@@ -192,7 +198,11 @@ pub fn set_tucked(app: &AppHandle, side: &str, tucked: bool, animate: bool, focu
             if has_panel {
                 if wm::is_visible(&app, "panel") {
                     if let Some((x, y)) = wm::position(&app, "panel") {
-                        *LAST_POS.lock().unwrap() = Some((x, y));
+                        // only a place the panel fully shows: tucked mid-slide (a quick click
+                        // away), it was half off screen, and every later open stopped there
+                        if on_screen(&app, x) {
+                            *LAST_POS.lock().unwrap() = Some((x, y));
+                        }
                         if animate && !slide(&app, x, offscreen_x(&app, &side), y, gen) {
                             return;
                         }
@@ -213,7 +223,7 @@ pub fn set_tucked(app: &AppHandle, side: &str, tucked: bool, animate: bool, focu
             }
             if has_panel {
                 let (dx, dy, _, _) = panel_rect(&app, &side);
-                let (tx, ty) = LAST_POS.lock().unwrap().unwrap_or((dx, dy));
+                let (tx, ty) = LAST_POS.lock().unwrap().filter(|(x, _)| on_screen(&app, *x)).unwrap_or((dx, dy));
                 if animate && !wm::is_visible(&app, "panel") {
                     let from = offscreen_x(&app, &side);
                     wm::set_position(&app, "panel", from, ty);

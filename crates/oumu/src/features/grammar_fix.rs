@@ -219,6 +219,9 @@ pub fn alerts(map: &TextMap, sent: &Sentence, edits: &[Edit], why: &str) -> Vec<
     let chars: Vec<char> = sent.text.chars().collect();
     let slice = |a: usize, b: usize| chars[a..b].iter().collect::<String>();
     let mut out = Vec::new();
+    // the model's replacement words, spelled right ("recieve" -> "recieved" becomes "received")
+    let fixed: Vec<Edit> = edits.iter().map(|e| Edit { from: e.from, to: e.to, with: e.with.iter().map(|w| spelled(w)).collect() }).collect();
+    let edits = &fixed;
     for e in edits {
         let (start, end, suggestion) = if e.from < e.to {
             (toks[e.from].start, toks[e.to - 1].end, e.with.join(" "))
@@ -233,7 +236,7 @@ pub fn alerts(map: &TextMap, sent: &Sentence, edits: &[Edit], why: &str) -> Vec<
         let original = slice(start, end);
         let (doc_start, doc_end) = (sent.start + start, sent.start + end);
         let hash = stable_hash("SpotGrammar", &format!("{}|{}", sent.text.trim(), original), None);
-        let message = if why.trim().is_empty() { "This is a grammar mistake; the fix changes only these words.".to_string() } else { why.trim().to_string() };
+        let message = if reason_fits(why, &toks, edits) { why.trim().to_string() } else { plain_reason(&original, e, &suggestion) };
         out.push(Alert {
             id: format!("spot-{:x}-{}", hash, doc_start),
             category: Category::Correctness,
@@ -253,6 +256,89 @@ pub fn alerts(map: &TextMap, sent: &Sentence, edits: &[Edit], why: &str) -> Vec<
         });
     }
     out
+}
+
+/// `word` with its spelling corrected when the offline checker (Harper) is sure it's
+/// misspelled and has a suggestion; otherwise as it is. Models fix the grammar of a word
+/// and keep its misspelling ("recieve" -> "recieved").
+fn spelled(word: &str) -> String {
+    use std::sync::Mutex;
+    static ENGINE: Mutex<Option<crate::engine::Engine>> = Mutex::new(None);
+    if word.is_empty() || !word.chars().all(|c| c.is_alphabetic() || c == '\'') {
+        return word.to_string();
+    }
+    let Ok(mut g) = ENGINE.lock() else { return word.to_string() };
+    let engine = g.get_or_insert_with(crate::engine::Engine::new);
+    let fix = engine
+        .check(word)
+        .into_iter()
+        .find(|a| (a.kind == "Spelling" || a.kind == "Typo") && a.original == word)
+        .and_then(|a| a.suggestions.into_iter().find(|s| !s.is_empty() && !s.contains(' ')));
+    match fix {
+        // keep the writer's capital
+        Some(s) if word.chars().next().is_some_and(char::is_uppercase) => {
+            let mut c = s.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or(s)
+        }
+        Some(s) => s,
+        None => word.to_string(),
+    }
+}
+
+/// Whether the model's reason talks only about words this fix changes: every word it
+/// quotes must be one of them. Models explain edits they never made ("incorrect article
+/// 'a'" when only "need" changed); such a reason is replaced by a plain one.
+fn reason_fits(why: &str, toks: &[Token], edits: &[Edit]) -> bool {
+    if why.trim().is_empty() {
+        return false;
+    }
+    let mut changed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for e in edits {
+        changed.extend(toks[e.from..e.to].iter().map(|t| t.core.to_lowercase()));
+        changed.extend(e.with.iter().map(|w| w.to_lowercase()));
+    }
+    let quoted = quoted_words(why);
+    !quoted.is_empty() && quoted.iter().all(|w| changed.contains(w))
+}
+
+/// The words inside quotes ('...', "...", ‘...’, “...”) of `s`, lowercased.
+fn quoted_words(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let opens = |c: char| matches!(c, '\'' | '"' | '‘' | '“');
+    let closes = |c: char| matches!(c, '\'' | '"' | '’' | '”');
+    let mut i = 0;
+    while i < chars.len() {
+        // an opening quote starts a quotation unless it's an apostrophe inside a word ("isn't")
+        if opens(chars[i]) && (i == 0 || !chars[i - 1].is_alphanumeric()) {
+            // its end: the next closing quote not followed by a letter ("can't" keeps going)
+            let end = (i + 1..chars.len()).find(|&j| closes(chars[j]) && chars.get(j + 1).is_none_or(|c| !c.is_alphanumeric()));
+            if let Some(end) = end {
+                let inner: String = chars[i + 1..end].iter().collect();
+                for w in inner.split_whitespace() {
+                    let w: String = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'').to_lowercase();
+                    if !w.is_empty() {
+                        out.push(w);
+                    }
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// A reason that is always true: what this one edit does.
+fn plain_reason(original: &str, e: &Edit, suggestion: &str) -> String {
+    if e.with.is_empty() {
+        format!("Remove the repeated “{original}”.")
+    } else if e.from == e.to {
+        format!("A word is missing here: “{suggestion}”.")
+    } else {
+        format!("“{original}” should be “{suggestion}” here.")
+    }
 }
 
 #[cfg(test)]
@@ -299,5 +385,37 @@ mod tests {
             check("The team was happy with the results of the test.", "Everyone loved what the tests showed us today."),
             Err(FixReject::TooManyChanges)
         );
+    }
+
+    fn messages(orig: &str, fixed: &str, why: &str) -> Vec<(String, String, String)> {
+        let edits = check(orig, fixed).expect("a grammar fix");
+        let sent = Sentence { start: 0, end: orig.chars().count(), text: orig.into(), line: 0, judge: true };
+        alerts(&TextMap::new(orig), &sent, &edits, why).into_iter().map(|a| (a.original, a.suggestions[0].clone(), a.message)).collect()
+    }
+
+    // The cases below are real answers the model gave (Oumu's spot-check cache, 2026-11-14).
+
+    #[test]
+    fn a_misspelling_the_model_kept_is_spelled_right() {
+        let got = messages("She recieve the mesage yesterday and definately agree.", "She recieved the mesage yesterday and definately agreed.", "Incorrect verb form: 'recieve' and 'agree' should be in the past tense ('recieved' and 'agreed') due to 'yesterday'.");
+        assert_eq!(got[0].1, "received", "{got:?}");
+        assert_eq!(got[1].1, "agreed");
+        // the reason quoted "recieved" (and "yesterday", not changed): replaced by a true one
+        assert_eq!(got[0].2, "“recieve” should be “received” here.");
+    }
+
+    #[test]
+    fn a_reason_about_words_that_did_not_change_is_replaced() {
+        let got = messages("This is an example of a sentense that need some fixes.", "This is an example of a sentense that needs some fixes.", "Incorrect article 'a' before vowel sound, and subject-verb agreement 'need' to 'needs'.");
+        assert_eq!(got, [("need".to_string(), "needs".to_string(), "“need” should be “needs” here.".to_string())]);
+    }
+
+    #[test]
+    fn a_reason_about_the_changed_words_is_kept() {
+        let got = messages("Their is a mistake in this sentence.", "There is a mistake in this sentence.", "Wrong homophone 'Their' used instead of 'There'.");
+        assert_eq!(got[0].2, "Wrong homophone 'Their' used instead of 'There'.");
+        // apostrophes inside a quoted word don't cut it short
+        assert_eq!(quoted_words("Missing apostrophe in contraction 'can't'."), ["can't"]);
+        assert_eq!(quoted_words("It isn't 'wrong' here."), ["wrong"]);
     }
 }

@@ -199,7 +199,8 @@ pub fn btn(key: &str, kind: Btn, label: &str, k: &Tok) -> El {
 
 /// A button with an icon before its label.
 pub fn btn_icon(key: &str, kind: Btn, ic: &str, ic_color: [u8; 3], label: &str, k: &Tok) -> El {
-    let b = btn(key, kind, "", k);
+    // the label names the button for screen readers (btn's own label is empty here)
+    let b = btn(key, kind, "", k).label(label);
     b.child(icon(ic, ic_color, 16.0)).child(text(label).font(ts(14.0, 500.0)).color(c(k.text)))
 }
 

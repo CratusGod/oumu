@@ -381,6 +381,22 @@ pub fn gemini_flash_candidates(names: &[String]) -> Vec<String> {
     found.into_iter().map(|(_, n)| n.clone()).collect()
 }
 
+/// Stable `gemini-<version>-flash-lite` models, newest first: the last resort. Free-tier
+/// quotas are counted per model and project, and Lite's is far larger than Flash's (20 a day),
+/// so when every Flash model is used up a Lite one usually still answers.
+pub fn gemini_lite_candidates(names: &[String]) -> Vec<String> {
+    let mut found: Vec<(Vec<u32>, &String)> = names
+        .iter()
+        .filter_map(|n| {
+            let ver = n.strip_prefix("gemini-")?.strip_suffix("-flash-lite")?;
+            let parts: Option<Vec<u32>> = ver.split('.').map(|p| p.parse().ok()).collect();
+            Some((parts?, n))
+        })
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, n)| n.clone()).collect()
+}
+
 pub fn newest_gemini_flash(names: &[String]) -> Option<String> {
     gemini_flash_candidates(names).into_iter().next()
 }
@@ -419,7 +435,9 @@ pub async fn gemini_models(cfg: &LlmConfig) -> Result<Vec<String>> {
 /// busy model can hang without answering at all (seen: 3.8 Flash, 90 s).
 const GEMINI_FIRST_CHUNK: Duration = Duration::from_secs(20);
 /// Models tried per request at most.
-const GEMINI_MAX_MODELS: usize = 4;
+/// The configured model and Flash models tried before Flash-Lite, and all models tried in all.
+const GEMINI_FLASH_MODELS: usize = 4;
+const GEMINI_MAX_MODELS: usize = 6;
 
 /// (configured model, model that answered for it) for this session, so only
 /// the first request after a model goes quiet pays the wait.
@@ -428,15 +446,26 @@ static GEMINI_WORKING: std::sync::Mutex<Option<(String, String)>> = std::sync::M
 static GEMINI_LISTED: std::sync::Mutex<Option<(String, Vec<String>)>> = std::sync::Mutex::new(None);
 
 /// The models to try, in order: the one that last answered for `configured`
-/// (else `configured`), then the stable Flash models, newest first.
+/// (else `configured`), then the stable Flash models, newest first, then the two newest
+/// Flash-Lite models.
 fn gemini_order(configured: &str, working: Option<&str>, listed: &[String]) -> Vec<String> {
     let mut out = vec![working.unwrap_or(configured).to_string()];
     for m in gemini_flash_candidates(listed) {
+        if out.len() >= GEMINI_FLASH_MODELS {
+            break;
+        }
         if !out.contains(&m) {
             out.push(m);
         }
     }
-    out.truncate(GEMINI_MAX_MODELS);
+    for m in gemini_lite_candidates(listed) {
+        if out.len() >= GEMINI_MAX_MODELS {
+            break;
+        }
+        if !out.contains(&m) {
+            out.push(m);
+        }
+    }
     out
 }
 
@@ -745,6 +774,19 @@ mod tests {
     }
 
     #[test]
+    fn gemini_falls_back_to_flash_lite_last() {
+        // the key's real list on 2026-11-15: every Flash model's 20-a-day free quota was used up
+        let listed: Vec<String> = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-flash-lite-latest"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(gemini_lite_candidates(&listed), ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]);
+        assert_eq!(gemini_order("gemini-3.5-flash", None, &listed), ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]);
+        // Lite never pushes a Flash model out
+        assert!(!gemini_flash_candidates(&listed).iter().any(|m| m.contains("lite")));
+    }
+
+    #[test]
     fn gemini_3_models_think_low_and_older_ones_are_left_alone() {
         let b = gemini_body("", &[msg("user", "hi")], false, 0.0);
         assert_eq!(with_thinking(b.clone(), "gemini-3.6-flash")["generationConfig"]["thinkingConfig"]["thinkingLevel"], "low");
@@ -845,7 +887,7 @@ mod tests {
 fn gemini_gave_up(last: &str) -> String {
     let l = last.to_lowercase();
     if l.contains("exceeded your current quota") || l.contains("quota exceeded") || l.contains("resource_exhausted") || l.contains("resource has been exhausted") {
-        format!("Your Gemini key has used up its quota for now (Google's limit for this key). It refills over time; or add another key in Settings → AI. ({last})")
+        format!("Your Gemini key has used up its free quota for today, on every model Oumu tried. It refills daily; or use a key from a different Google project (keys in one project share its quota), or another provider, in Settings → AI. ({last})")
     } else {
         format!("Google's Gemini models are busy right now; try again in a minute. ({last})")
     }
@@ -857,7 +899,7 @@ mod gave_up_tests {
 
     #[test]
     fn quota_is_not_busy() {
-        assert!(gemini_gave_up("Gemini error 429 Too Many Requests: You exceeded your current quota, please check your plan").starts_with("Your Gemini key has used up its quota"));
+        assert!(gemini_gave_up("Gemini error 429 Too Many Requests: You exceeded your current quota, please check your plan").starts_with("Your Gemini key has used up its free quota"));
         assert!(gemini_gave_up("gemini-3.5-flash did not answer within 20 s").starts_with("Google's Gemini models are busy"));
     }
 }

@@ -771,6 +771,9 @@ pub fn validate(item: &RawItem, orig: &str, earlier: &[&str], doc_rest: &str) ->
             }
         }
         let mut flags = flags;
+        // the split label comes from what the rewrite really is: the model's own ("split into
+        // 3 sentences") was seen on a rewrite that stayed one sentence
+        flags.retain(|f| !f.contains("split") && !f.contains(" sentences"));
         if is_split && wo_n > LONG_WORDS {
             flags.push(format!("split into {} sentences", pieces.len()));
         } else if is_split {

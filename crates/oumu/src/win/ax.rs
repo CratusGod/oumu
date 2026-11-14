@@ -429,6 +429,35 @@ impl AXElement {
         Some(text.len())
     }
 
+    /// The text selected in this element or the nearest ancestor that has a selection: a
+    /// highlight in a web page or a chat transcript (Chromium, Electron), which isn't in the
+    /// focused text box. Walks up at most `max_up` parents.
+    pub fn selection_up(&self, max_up: usize) -> Option<String> {
+        let mut cur = Some(self.clone());
+        for _ in 0..=max_up {
+            let e = cur?;
+            if let Some(tp) = e.text_pattern() {
+                count();
+                if let Ok(sel) = unsafe { tp.GetSelection() } {
+                    let n = unsafe { sel.Length() }.unwrap_or(0);
+                    let mut out = String::new();
+                    for i in 0..n {
+                        if let Ok(r) = unsafe { sel.GetElement(i) } {
+                            if let Ok(t) = unsafe { r.GetText(20_000) } {
+                                out.push_str(&t.to_string());
+                            }
+                        }
+                    }
+                    if !out.trim().is_empty() {
+                        return Some(out);
+                    }
+                }
+            }
+            cur = e.parent();
+        }
+        None
+    }
+
     /// "AXSelectedTextRange": (start, length) in UTF-16 units.
     pub fn range(&self, name: &str) -> Option<(usize, usize)> {
         if name != "AXSelectedTextRange" {
