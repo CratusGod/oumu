@@ -7,6 +7,10 @@ pub mod headless;
 pub mod icons;
 pub mod layer;
 pub mod panel;
+#[cfg(windows)]
+pub mod strips;
+#[cfg(not(windows))]
+#[path = "strips_rune.rs"]
 pub mod strips;
 pub mod style;
 pub mod theme;
@@ -222,7 +226,15 @@ pub struct Front {
     tray: Option<rune::tray::Tray>,
 }
 
+/// Linux: everything is in the compositor's layout px (points), so the scale is 1.
+#[cfg(not(windows))]
+fn primary_monitor() -> tauri::MonitorInfo {
+    let (x, y, w, h) = crate::linux::desktop::primary_monitor().unwrap_or((0.0, 0.0, 1920.0, 1080.0));
+    tauri::MonitorInfo { x: x as i32, y: y as i32, w: w.max(1.0) as u32, h: h.max(1.0) as u32, scale: 1.0 }
+}
+
 /// Physical px per point on the primary display, and the display's frame.
+#[cfg(windows)]
 fn primary_monitor() -> tauri::MonitorInfo {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint};
@@ -590,6 +602,14 @@ pub fn run(app: AppHandle, shared: Shared, dock_side: String, translate_on_start
     front.tab = Some(rapp.overlay(surface("Oumu tab", size("tab"), layer::tab_view), mk(&surf)));
     front.button = Some(rapp.overlay(surface("Oumu button", size("oumubutton"), layer::button_view), mk(&surf)));
     front.card = Some(rapp.overlay(surface("Oumu suggestion", (layer::CARD_W, 200.0), layer::card_view), surf));
+    // Linux: the underlines are an overlay too, made here with the others (click-through)
+    #[cfg(not(windows))]
+    {
+        let mut o = rune::ConfiguredOverlay::from(OverlaySpec { name: "Oumu underlines", size: (10.0, 10.0), edge: rune::ScreenEdge::Top, margin: 0.0, align: rune::Align::Start, inset: 0.0, interactive: false, view: strips::view });
+        o.options = OverlayOptions { input: rune::OverlayInput::None, ..Default::default() };
+        front.strips = Some(strips::Strips::with_overlay(rapp.overlay(o, strips::StripS::default())));
+        front.strips_tried = true;
+    }
 
     // the panel
     let mut ps = panel::PanelS::new(front.tok.clone(), app.clone(), shared.clone(), model.clone());

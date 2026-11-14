@@ -5628,6 +5628,7 @@ dependencies = [
  "harper-core",
  "image",
  "install",
+ "libc",
  "log",
  "oumu-rt",
  "regex",
@@ -5645,6 +5646,7 @@ dependencies = [
  "url",
  "windows 0.61.3",
  "windows 0.62.2",
+ "zbus 5.19.0",
 ]
 
 [[package]]

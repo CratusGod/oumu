@@ -526,7 +526,9 @@ pub fn highlighted_text() -> Option<String> {
 pub fn autostart_status() -> Option<bool> {
     #[cfg(target_os = "windows")]
     return Some(crate::win::autostart::enabled());
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    return Some(crate::linux::autostart::enabled());
+    #[cfg(target_os = "macos")]
     None
 }
 
@@ -534,7 +536,9 @@ pub fn autostart_status() -> Option<bool> {
 pub fn set_autostart(on: bool) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     return crate::win::autostart::set(on);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    return crate::linux::autostart::set(on);
+    #[cfg(target_os = "macos")]
     {
         let _ = on;
         Err("not on this system".into())

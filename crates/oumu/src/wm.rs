@@ -91,10 +91,9 @@ pub(crate) mod plain {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+// Linux too: the Rune front end places its own surfaces from this state (overlays are
+// layer-shell surfaces; the panel is floated and moved through Hyprland).
 use plain as imp;
-#[cfg(target_os = "linux")]
-use crate::linux::layer as imp;
 
 /// Take over a freshly built window (Linux: re-host it as a layer surface).
 pub fn adopt(app: &AppHandle, label: &str) {
