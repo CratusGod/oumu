@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = ["crates/shared", "crates/utsuri-engine", "crates/utsuri", "crates/utsuri-e2e", "crates/oumu-rt", "crates/oumu", "crates/install", "crates/setup"]
+exclude = ["spikes", "vendor"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+shared = { path = "crates/shared" }
+anyhow = "1"
+log = "0.4"
+wgpu = { version = "30", default-features = false, features = ["dx12", "wgsl", "std"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "tiff", "bmp", "gif", "ico", "rayon"] }
+# Rune at rev c369cc0, vendored with our patches (search "cratus-rs patch" in vendor/rune)
+rune = { path = "vendor/rune/crates/rune", features = ["tooling"] }
+rune-kit = { path = "vendor/rune/crates/rune-kit" }
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+
+# Rune's own patches: an app that depends on Rune repeats them (a dependency's [patch]
+# doesn't reach this workspace). Keep the rev the same as rune's above.
+[patch.crates-io]
+# our copy of Rune's vendor/winit at that rev, plus one fix (search "cratus-rs patch")
+winit = { path = "vendor/winit" }
+parley_engine = { path = "vendor/rune/vendor/parley_engine" }
+wgpu-hal = { path = "vendor/rune/vendor/wgpu-hal" }
+accesskit_windows = { path = "vendor/rune/vendor/accesskit_windows" }
+
+[profile.release]
+# function names in the .pdb, so a crash log (utsuri/src/crash.rs) can say where
+debug = "line-tables-only"
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+# MSVC keeps symbols in the .pdb, not the exe: stripping only cost the crash log its names
+strip = "none"
+
+# Quick optimized builds for test runs (the release link with LTO takes ~25 min):
+# `cargo build --profile fast`, then CRATUS_PROFILE=fast for the test scripts and utsuri-e2e.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+
+# Lean test builds: the PC is short on disk. No debug info or incremental cache;
+# dependencies optimized (image codecs and PDF work are slow unoptimized).
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = 0

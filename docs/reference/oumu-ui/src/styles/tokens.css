@@ -1,0 +1,91 @@
+/* Design tokens. A theme sets only the base colours (src/lib/theme.ts writes
+   them onto :root); everything below "derived" follows from those, so a new
+   theme, or a matugen palette, needs no other change. These values are the
+   default theme, used until the settings load. */
+:root {
+  /* ---- base colours (one set per theme) ---- */
+  --bg-base: #1c1c1c;
+  --bg-elevated: #242424;
+  --bg-subdued: #2e2e2e;
+  --bg-surface: #1f1f1f;       /* the edge tab, Oumu button and hover card */
+  --border-base: #545454;
+  --border-subdued: #3a3a3a;
+  --text-base: #ffffff;
+  --text-subdued: #bcbcbc;
+  --text-muted: #8a8a8a;
+  --icon-base: #d9d9d9;
+  --brand: #2cc9b6;
+  --brand-strong: #15c39a;
+  --on-brand: #0e1f1c;         /* text on a brand-coloured button */
+  --correctness: #ff7a74;
+  --clarity: #7d99f0;
+  --engagement: #2cc9b6;
+  --delivery: #a598f0;
+  --plagiarism: #80f3f3;
+  --warning: #ffbf47;
+  --link: #7ab8ff;
+  --accent: #6b5bd6;           /* the avatar */
+  --shadow: rgba(0, 0, 0, 0.45);
+
+  /* ---- derived ---- */
+  --bg-inverse: var(--text-base);
+  --bg-hover: color-mix(in srgb, var(--text-base) 5%, var(--bg-base));
+  --bg-sunken: color-mix(in srgb, #000 35%, var(--bg-base));
+  --bg-chip: color-mix(in srgb, var(--text-base) 8%, var(--bg-base));
+  --border-f3: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  --scrollbar: color-mix(in srgb, var(--text-base) 22%, var(--bg-base));
+  --on-accent: var(--bg-base); /* text on a category-coloured badge */
+  --brand-hover: color-mix(in srgb, var(--brand-strong) 85%, var(--text-base));
+  /* The edge tab, Oumu button and hover card: a surface tinted toward the brand, with a lit edge. */
+  --glass: linear-gradient(150deg, color-mix(in srgb, var(--brand) 14%, var(--bg-surface)) 0%, var(--bg-surface) 60%);
+  --glass-border: color-mix(in srgb, var(--brand) 30%, var(--border-subdued));
+  --brand-tint: color-mix(in srgb, var(--brand) 18%, var(--bg-base));
+  --brand-tint-soft: color-mix(in srgb, var(--brand) 9%, var(--bg-base));
+  --brand-chip: color-mix(in srgb, var(--brand) 22%, var(--bg-base));
+  --brand-chip-ink: color-mix(in srgb, var(--brand) 65%, var(--text-base));
+  --brand-dark: color-mix(in srgb, var(--brand) 55%, #000);
+  --brand-subdued: color-mix(in srgb, var(--brand) 30%, var(--bg-base));
+  --link-hover: color-mix(in srgb, var(--brand) 70%, var(--text-base));
+  --warn-bg: color-mix(in srgb, var(--warning) 12%, var(--bg-base));
+  --warn-border: color-mix(in srgb, var(--warning) 35%, var(--bg-base));
+  --warn-ink: color-mix(in srgb, var(--warning) 80%, var(--text-base));
+  --ok-bg: color-mix(in srgb, var(--brand) 14%, var(--bg-base));
+  --ok-border: color-mix(in srgb, var(--brand) 38%, var(--bg-base));
+  --ok-ink: color-mix(in srgb, var(--brand) 70%, var(--text-base));
+  --mark-bg: color-mix(in srgb, var(--warning) 25%, var(--bg-base));
+  --q-bg: color-mix(in srgb, var(--warning) 30%, var(--bg-base));
+  --q-ink: color-mix(in srgb, var(--warning) 75%, var(--text-base));
+  --correctness-strong: color-mix(in srgb, var(--correctness) 70%, #000);
+  --clarity-strong: color-mix(in srgb, var(--clarity) 70%, #000);
+  --engagement-strong: color-mix(in srgb, var(--engagement) 55%, #000);
+  --delivery-strong: color-mix(in srgb, var(--delivery) 70%, #000);
+  --premium: var(--warning);
+  --premium-text: var(--bg-base);
+  --purple-chip: color-mix(in srgb, var(--delivery) 25%, var(--bg-base));
+  --purple-chip-ink: color-mix(in srgb, var(--delivery) 70%, var(--text-base));
+
+  --radius-1: 4px;
+  --radius-2: 8px;
+  --radius-3: 12px;
+  --radius-4: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-heading: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+}
+
+/* Light themes: sunken surfaces darken a little instead of going near-black,
+   badge text turns white, shadows soften. */
+:root[data-mode="light"] {
+  --bg-sunken: color-mix(in srgb, var(--text-base) 7%, var(--bg-base));
+  --bg-hover: color-mix(in srgb, var(--text-base) 6%, var(--bg-base));
+  --on-accent: #ffffff;
+  --premium-text: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.18);
+  --warn-ink: color-mix(in srgb, var(--warning) 70%, #000);
+  --ok-ink: color-mix(in srgb, var(--brand) 70%, #000);
+}

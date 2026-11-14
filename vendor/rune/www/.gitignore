@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.cloudflare/
+# Built by scripts/build.ts from www/app; never committed.
+src/wasm/
