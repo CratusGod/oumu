@@ -73,9 +73,16 @@ def move_to(x: int, y: int, steps: int = 12, pause: float = 0.012) -> None:
         time.sleep(pause)
 
 
+def dispatch(lua: str) -> None:
+    """One Hyprland dispatcher, Lua form (Hyprland 0.57's only form here)."""
+    r = hypr(f"dispatch {lua}").strip()
+    if r != "ok":
+        raise RuntimeError(f"hyprland refused {lua}: {r}")
+
+
 def jump_to(x: int, y: int) -> None:
     """Teleport (not a drag): the compositor's own cursor move."""
-    hypr(f"dispatch movecursor {x} {y}")
+    dispatch(f"hl.dsp.cursor.move({{ x = {x}, y = {y} }})")
     time.sleep(0.05)
 
 
@@ -123,11 +130,10 @@ def wait_window(timeout: float = 15, **kw):
 
 def place(addr: str, x: int, y: int, w: int, h: int) -> None:
     """Float a window at an exact rect (runtime dispatches; no config is touched)."""
-    c = next(c for c in hypr_json("clients") if c["address"] == addr)
-    if not c["floating"]:
-        hypr(f"dispatch setfloating address:{addr}")
-    hypr(f"dispatch resizewindowpixel exact {w} {h},address:{addr}")
-    hypr(f"dispatch movewindowpixel exact {x} {y},address:{addr}")
+    sel = f'window = "address:{addr}"'
+    dispatch(f'hl.dsp.window.float({{ action = "enable", {sel} }})')
+    dispatch(f"hl.dsp.window.resize({{ x = {w}, y = {h}, exact = true, {sel} }})")
+    dispatch(f"hl.dsp.window.move({{ x = {x}, y = {y}, exact = true, {sel} }})")
     time.sleep(0.15)
 
 
@@ -136,7 +142,7 @@ def active_window():
 
 
 def workspace(name: str) -> None:
-    hypr(f"dispatch workspace {name}")
+    dispatch(f'hl.dsp.focus({{ workspace = "{name}" }})')
     time.sleep(0.2)
 
 

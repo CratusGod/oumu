@@ -289,3 +289,50 @@ mod tests {
         assert!(w.is_none() || w.unwrap().address.is_empty());
     }
 }
+
+/// One of our own toplevel windows, as Hyprland sees it.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct OwnWindow {
+    pub address: String,
+    pub at: [f64; 2],
+    pub size: [f64; 2],
+    pub title: String,
+    pub pid: i32,
+    #[serde(default)]
+    pub floating: bool,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub mapped: bool,
+}
+
+/// This process's mapped window titled `title` (the panel is our only toplevel).
+pub fn own_window(title: &str) -> Option<OwnWindow> {
+    let me = std::process::id() as i32;
+    let all: Vec<OwnWindow> = json("j/clients")?;
+    all.into_iter().find(|w| w.pid == me && w.title == title && w.mapped)
+}
+
+/// Float and pin our window and put it at a rect (layout px). Wayland apps can't place
+/// their own windows; Hyprland can, by address. True when every dispatch was taken.
+pub fn place_own(w: &OwnWindow, x: f64, y: f64, width: f64, height: f64) -> bool {
+    let sel = format!("address:{}", w.address);
+    if !safe_selector(&sel) {
+        return false;
+    }
+    let (x, y, width, height) = (x.round() as i64, y.round() as i64, width.round().max(1.0) as i64, height.round().max(1.0) as i64);
+    let mut ok = true;
+    if !w.floating {
+        ok &= ok_reply(&format!("hl.dsp.window.float({{ action = \"enable\", window = \"{sel}\" }})"));
+    }
+    if !w.pinned {
+        ok &= ok_reply(&format!("hl.dsp.window.pin({{ action = \"enable\", window = \"{sel}\" }})"));
+    }
+    ok &= ok_reply(&format!("hl.dsp.window.resize({{ x = {width}, y = {height}, exact = true, window = \"{sel}\" }})"));
+    ok &= ok_reply(&format!("hl.dsp.window.move({{ x = {x}, y = {y}, exact = true, window = \"{sel}\" }})"));
+    ok
+}
+
+fn ok_reply(lua: &str) -> bool {
+    ok(request(&format!("dispatch {lua}")))
+}

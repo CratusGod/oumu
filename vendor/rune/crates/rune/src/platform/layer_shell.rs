@@ -439,9 +439,13 @@ impl LayerSurface {
                 self.layer.set_size(width.ceil().max(1.0) as u32, height.ceil().max(1.0) as u32);
                 self.layer.set_anchor(Anchor::Top | Anchor::Left);
                 self.layer.set_margin(y.round() as i32, 0, 0, x.round() as i32);
+                // cratus-rs patch: a Rect is in display coordinates. With exclusive zone 0 the
+                // compositor measures margins from inside other surfaces' reserved zones (a
+                // top bar), so the surface landed that many px off; -1 ignores them.
+                self.layer.set_exclusive_zone(-1);
                 return;
             }
-            _ => {}
+            _ => self.layer.set_exclusive_zone(0),
         }
         let at = match self.options.placement {
             Some(OverlayPlacement::Edge { edge, margin, align, inset }) => Placement { size: at.size, edge, margin, align, inset },

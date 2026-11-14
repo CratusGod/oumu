@@ -224,7 +224,30 @@ pub struct Front {
     e2e_accept: String,
     surf_key: String,
     tray: Option<rune::tray::Tray>,
+    /// Linux: where the panel was last asked to be (layout px), when, and the last check.
+    #[cfg(target_os = "linux")]
+    hypr: HyprPanel,
 }
+
+/// The panel's placement through Hyprland (Wayland windows can't place themselves).
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct HyprPanel {
+    want: Option<(f64, f64, f64, f64)>,
+    since: Option<std::time::Instant>,
+    checked: Option<std::time::Instant>,
+}
+
+/// How often the panel's real place is compared with the wanted one.
+#[cfg(target_os = "linux")]
+const HYPR_CHECK: Duration = Duration::from_millis(100);
+/// For this long after a move is asked, a different place means "not there yet"; after it,
+/// it means the user moved the panel.
+#[cfg(target_os = "linux")]
+const HYPR_SETTLE: Duration = Duration::from_millis(1000);
+/// Hyprland reports positions inside the border: differences this small are the same place.
+#[cfg(target_os = "linux")]
+const HYPR_SLACK: f64 = 4.0;
 
 /// Linux: everything is in the compositor's layout px (points), so the scale is 1.
 #[cfg(not(windows))]
@@ -290,6 +313,8 @@ impl Front {
             e2e_accept: String::new(),
             surf_key: String::new(),
             tray: None,
+            #[cfg(target_os = "linux")]
+            hypr: HyprPanel::default(),
         }
     }
 
@@ -471,6 +496,7 @@ impl Front {
                     self.focus_applied = st.focus_seq;
                     win.focus();
                 }
+                #[cfg(windows)]
                 if let Some(p) = win.placement() {
                     let now = (p.position, p.content_size);
                     if st.visible && self.panel_at.is_some_and(|a| a != now) {
@@ -481,6 +507,8 @@ impl Front {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
+        self.place_panel_hyprland();
         for (i, label, ov) in [(1, "tab", &self.tab), (2, "oumubutton", &self.button)] {
             let (Some(ov), Some(st)) = (ov, self.app.window_state(label)) else { continue };
             if st.seq == self.applied[i] {
@@ -493,6 +521,45 @@ impl Front {
             } else {
                 ov.hide();
             }
+        }
+    }
+
+    /// Linux: float, pin and move the panel through Hyprland until it is where the logic
+    /// wants it; once it has settled, a different place is the user's drag, reported back.
+    #[cfg(target_os = "linux")]
+    fn place_panel_hyprland(&mut self) {
+        use crate::linux::hyprland;
+        let Some(st) = self.app.window_state("panel") else { return };
+        if !st.visible {
+            self.hypr.want = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.hypr.checked.is_some_and(|t| now - t < HYPR_CHECK) {
+            return;
+        }
+        self.hypr.checked = Some(now);
+        let want = (st.x, st.y, st.w, st.h);
+        if self.hypr.want != Some(want) {
+            self.hypr.want = Some(want);
+            self.hypr.since = Some(now);
+        }
+        // not mapped yet (just shown): the next check places it
+        let Some(w) = hyprland::own_window("Oumu") else { return };
+        let at = (w.at[0], w.at[1], w.size[0], w.size[1]);
+        let off = (at.0 - want.0).abs().max((at.1 - want.1).abs()).max((at.2 - want.2).abs()).max((at.3 - want.3).abs());
+        if off <= HYPR_SLACK && w.floating && w.pinned {
+            return;
+        }
+        let settling = self.hypr.since.is_some_and(|t| now - t < HYPR_SETTLE);
+        if settling || !w.floating || !w.pinned {
+            if !hyprland::place_own(&w, want.0, want.1, want.2, want.3) {
+                log::debug!("hyprland didn't take the panel placement");
+            }
+        } else {
+            // the user dragged or resized it: that is the panel's place now
+            self.hypr.want = Some(at);
+            self.app.report_frame("panel", at.0, at.1, at.2, at.3);
         }
     }
 
@@ -640,6 +707,14 @@ pub fn run(app: AppHandle, shared: Shared, dock_side: String, translate_on_start
     }
     crate::host::spawn(app.clone(), shared.clone());
     crate::debug_server::spawn(app.clone(), shared.clone());
+    // Linux: the accessibility bus drops when the process that switched it on exits; once
+    // the user agreed (the saved setting), each launch switches it back on
+    #[cfg(target_os = "linux")]
+    std::thread::spawn(|| {
+        if !crate::ax::is_trusted() && crate::ax::consent_saved() {
+            crate::ax::prompt_trust();
+        }
+    });
     crate::theme::watch(app.clone(), shared.clone());
 
     // the tray

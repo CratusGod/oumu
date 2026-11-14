@@ -38,7 +38,11 @@ const MAX_REQUEST: usize = 64 * 1024;
 /// A highlight waiting for the Translate view to open and pick it up.
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
 
+/// `$XDG_RUNTIME_DIR/oumu.sock`; `OUMU_SOCK` for tests (Utsuri's Translate reads it too).
 fn socket_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("OUMU_SOCK") {
+        return Some(PathBuf::from(p));
+    }
     Some(dirs::runtime_dir()?.join("oumu.sock"))
 }
 
