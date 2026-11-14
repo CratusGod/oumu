@@ -196,8 +196,10 @@ def oumu() -> int:
     s.script("paraphraser-result", "result", [], 0.5, ["heading to the library", "Replace text", "Copy", "Show changes"])
     s.script("paraphraser-result", "diff", [tap("diff", 0.2)], 0.6, ["Hide changes"])
     s.script("rewriter", "ready", [], 0.5, ["AI Rewriter is ready to go", "Scan my text"])
-    s.script("review", "rewriter-auto-scan", [tap("rail/rewriter", 0.3)], 2.0, ["AI phrases reviewed", "it is important to note that", "delve into"], ["Scan my text"])
-    s.script("review", "rewriter-dismiss", [tap("rail/rewriter", 0.3), tap("dismiss", 1.5)], 2.2, ["1/2"])
+    # the scan runs on a real-time worker while headless time is virtual: a fast (release)
+    # build reaches 2 s before the worker is done, so these wait longer than on Windows
+    s.script("review", "rewriter-auto-scan", [tap("rail/rewriter", 0.3)], 4.0, ["AI phrases reviewed", "it is important to note that", "delve into"], ["Scan my text"])
+    s.script("review", "rewriter-dismiss", [tap("rail/rewriter", 0.3), tap("dismiss", 3.5)], 4.2, ["1/2"])
     s.script("humanizer", "voice-form", [tap("create-voice", 0.2)], 0.8, ["e.g. The Storyteller", "Paste something you wrote"])
     s.script("humanizer", "voice-needs-name", [tap("create-voice", 0.2), tap("save-voice", 0.5)], 1.0, ["Give the voice a name first."])
     s.script("detector", "hook", [], 0.5, ["Detect AI generated text", "Check this text"])

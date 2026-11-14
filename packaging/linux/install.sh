@@ -48,8 +48,15 @@ OUT="$ROOT/target/$PROFILE"
 echo "== installing"
 mkdir -p "$BIN" "$ICONS" "$APPS"
 # a running copy keeps its old file open; install by rename so it is never half-written
+# the build keeps line tables for crash logs (~440 MB on Linux, where they sit inside the
+# binary); the installed copy drops them and keeps the symbol names (~75 MB)
 for app in utsuri oumu; do
-  install -m 755 "$OUT/$app" "$BIN/.$app.new"
+  if command -v strip >/dev/null; then
+    strip --strip-debug -o "$BIN/.$app.new" "$OUT/$app"
+    chmod 755 "$BIN/.$app.new"
+  else
+    install -m 755 "$OUT/$app" "$BIN/.$app.new"
+  fi
   mv -f "$BIN/.$app.new" "$BIN/$app"
 done
 install -m 644 "$ROOT/crates/utsuri/assets/utsuri.png" "$ICONS/dev.cratusgod.utsuri.png"
