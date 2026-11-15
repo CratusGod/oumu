@@ -1,4 +1,4 @@
-"""Measure Utsuri and Oumu on this desktop: start-up time, idle and busy CPU, RAM, GPU memory,
+"""Measure Oumu on this desktop: start-up time, idle and busy CPU, RAM, GPU memory,
 response times and what they store on disk.
 
 Every app here is a test instance with its own data folder; the user's running apps are only
@@ -24,6 +24,8 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import oumu_probe as o  # noqa: E402
+
+APPS = ("oumu",)
 
 ROOT = HERE.parents[1]
 REL = ROOT / "target" / "release"
@@ -157,23 +159,25 @@ def startup_times() -> dict:
     out = {}
     with tempfile.TemporaryDirectory() as d:
         ts = []
-        for i in range(STARTS):
+        for i in range(STARTS if "utsuri" in APPS else 0):
             tmp = Path(d) / f"u{i}"
             tmp.mkdir()
             p, s = start_utsuri(tmp)
             ts.append(s)
             stop(p)
             time.sleep(0.5)
-        out["utsuri"] = ts
+        if ts:
+            out["utsuri"] = ts
         ts = []
-        for i in range(STARTS):
+        for i in range(STARTS if "oumu" in APPS else 0):
             data = Path(d) / f"o{i}"
             o.settings(data, False)
             p, s = start_oumu(data)
             ts.append(s)
             stop(p)
             time.sleep(0.5)
-        out["oumu"] = ts
+        if ts:
+            out["oumu"] = ts
     return {k: {"median_ms": round(statistics.median(v) * 1000), "min_ms": round(min(v) * 1000), "max_ms": round(max(v) * 1000)} for k, v in out.items()}
 
 
@@ -251,7 +255,7 @@ def storage() -> dict:
 def users_running() -> dict:
     """The user's own running apps (read only)."""
     out = {}
-    for name in ("oumu", "utsuri"):
+    for name in APPS:
         r = subprocess.run(["pgrep", "-x", name], capture_output=True, text=True)
         pids = [int(x) for x in r.stdout.split()]
         if not pids:
@@ -312,22 +316,25 @@ def busy(cmd: list[str], pattern: str, env: dict | None = None) -> dict:
 def main() -> int:
     report: dict = {}
     print("storage …", flush=True)
-    report["storage_mb"] = storage()
+    report["storage_mb"] = {k: v for k, v in storage().items() if k.split()[0] in APPS or k.startswith("icons")}
     print("your running apps …", flush=True)
     report["your_running_apps"] = users_running()
     print("start-up …", flush=True)
     report["startup"] = startup_times()
-    print("speed …", flush=True)
-    report["oumu_speed"] = oumu_speed()
-    for name in ("utsuri", "oumu"):
+    if "oumu" in APPS:
+        print("speed …", flush=True)
+        report["oumu_speed"] = oumu_speed()
+    for name in APPS:
         print(f"{name} idle ({IDLE_S} s) …", flush=True)
         report[f"{name}_idle"] = idle(name)
     if "--busy" in sys.argv:
         env = dict(os.environ, CRATUS_PROFILE="release")
-        print("utsuri busy (E2E, 65 drags) …", flush=True)
-        report["utsuri_busy"] = busy(["cargo", "run", "--release", "-q", "-p", "utsuri-e2e"], "target/release/utsuri( |$)", env)
-        print("oumu busy (E2E with AI) …", flush=True)
-        report["oumu_busy"] = busy([sys.executable, str(HERE / "oumu_e2e.py")], "target/release/oumu$", env)
+        if "utsuri" in APPS:
+            print("utsuri busy (E2E, 65 drags) …", flush=True)
+            report["utsuri_busy"] = busy(["cargo", "run", "--release", "-q", "-p", "utsuri-e2e"], "target/release/utsuri( |$)", env)
+        if "oumu" in APPS:
+            print("oumu busy (E2E with AI) …", flush=True)
+            report["oumu_busy"] = busy([sys.executable, str(HERE / "oumu_e2e.py")], "target/release/oumu$", env)
     out = ROOT / "target" / "e2e" / "measure-latest.json"
     out.write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))

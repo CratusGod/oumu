@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Headless UI suites for Utsuri and Oumu on Linux (ported from tests/*_headless.ps1).
+"""Headless UI suite for Oumu on Linux (ported from tests/*_headless.ps1).
 
 Every window renders, scripted taps/drags/typing change what they should (checked in Rune's
 element tree), and no text sticks out of its container. Nothing opens on screen and nothing
 touches the mouse or keyboard; settings and data go to a fresh folder per run.
 
-Usage: headless.py [utsuri|oumu|all]    (CRATUS_PROFILE=fast|release picks the build)
+Usage: headless.py    (CRATUS_PROFILE=fast|release picks the build)
 """
 from __future__ import annotations
 
@@ -123,50 +123,6 @@ def tap(key: str, t: float) -> dict:
     return {"t": t, "type": "tap", "key": key}
 
 
-def utsuri() -> int:
-    s = Suite("utsuri")
-    s.env["UTSURI_SETTINGS"] = str(s.out / "settings.json")
-    want = ["menu", "menu-tools", "menu-hub", "menu-click", "toasts", "settings", "welcome", "compress", "edit", "crop", "redact", "annotate", "addbg", "stamp", "organize", "resize", "metadata", "pdf-metadata", "protect", "unlock"]
-    print("== windows render")
-    s.renders(want, 1.5, lambda w: 5000)
-    print("== nothing cut off")
-    for w in want:
-        s.script(w, f"layout-{w}", [], 1.0, [])
-    print("== menu and notifications")
-    s.script("menu", "convert-ring", [], 0.5, ["Convert", "WEBP", "Smallest for web", "photo.jpg", "PNG", "PDF"])
-    s.script("menu-tools", "tools-ring", [], 0.5, ["Tools", "Compress", "Crop", "Annotate", "Trim to a ratio"])
-    s.script("menu-hub", "pdf-ring", [], 0.5, ["report.pdf"])
-    s.script("toasts", "cards", [], 0.5, ["JPG", "75% smaller", "Open", "Show in folder", "Undo", "Compressing", "Couldn't finish"])
-    print("== tools")
-    s.script("resize", "preset-25", [tap("preset/0", 0.2)], 0.6, [f"1600 {X} 1067  {A}  400 {X} 267"])
-    s.script("resize", "typed-width", [tap("w", 0.2), {"t": 0.3, "type": "key", "name": "End"}, {"t": 0.35, "type": "key", "name": "Backspace"}, {"t": 0.4, "type": "key", "name": "Backspace"}, {"t": 0.45, "type": "key", "name": "Backspace"}, {"t": 0.5, "type": "type", "text": "1000"}], 1.4, [f"1600 {X} 1067  {A}  1000 {X} 667"])
-    s.script("compress", "target-mode", [tap("mode/1", 0.2)], 3.0, ["Make each under", "quality"])
-    s.script("crop", "square", [tap("ratio/2", 0.2)], 0.6, [f"1067 {X} 1067 px"])
-    s.script("crop", "rotate", [tap("rotate-right", 0.2)], 0.6, [f"1067 {X} 1600 px"])
-    box = {"t": 0.2, "type": "drag", "x": 300, "y": 320, "dx": 160, "dy": 90, "dur": 0.3}
-    s.script("redact", "one-box", [box], 1.0, ["1 area"])
-    s.script("redact", "undo", [box, tap("undo", 0.8)], 1.2, ["Drag over what to hide"])
-    s.script("annotate", "text", [tap("tool/5", 0.2), {"t": 0.3, "type": "tap", "x": 400, "y": 400}, {"t": 0.5, "type": "type", "text": "Hello"}, {"t": 1.0, "type": "key", "name": "Enter"}], 1.5, ["Hello"])
-    pw = lambda second: [tap("pw", 0.2), {"t": 0.3, "type": "type", "text": "Secret1!"}, tap("pw2", 0.9), {"t": 1.0, "type": "type", "text": second}]
-    s.script("protect", "match", pw("Secret1!"), 1.8, ["Looks good"])
-    s.script("protect", "mismatch", pw("nope"), 1.6, ["don't match"])
-    s.script("unlock", "prompt", [], 0.5, ["Password", "Unlock"])
-    s.script("metadata", "gps", [tap("all-toggle", 0.2)], 0.6, ["includes your GPS location", "Location", "Remove location only", "All fields"])
-    s.script("pdf-metadata", "fields", [], 0.5, ["hidden field"])
-    s.script("stamp", "image-mode", [tap("mode/1", 0.2)], 0.6, ["Choose image", "Pick an image to stamp"])
-    s.script("stamp", "bad-pages", [tap("pages", 0.2), {"t": 0.3, "type": "type", "text": "9-12"}], 0.8, ["9"])
-    s.script("organize", "delete-page", [tap("page/0", 0.2), tap("delete", 0.4)], 0.8, ["7  "], ["8  "])
-    s.script("organize", "cut", [tap("page/3", 0.2), tap("cut", 0.4)], 0.8, ["Save 2 PDFs"])
-    s.script("organize", "pick-pages", [tap("pick", 0.2), {"t": 0.3, "type": "type", "text": "2-3, 6"}, {"t": 0.9, "type": "key", "name": "Enter"}], 1.5, ["3 selected", "Save"])
-    s.script("organize", "pick-bad", [tap("pick", 0.2), {"t": 0.3, "type": "type", "text": "40"}, {"t": 0.6, "type": "key", "name": "Enter"}], 1.2, ["Use page numbers from 1 to 8"])
-    s.script("organize", "extract-shown", [tap("page/1", 0.2)], 0.6, ["Extract selection", "1 selected"])
-    s.script("addbg", "aspect", [tap("aspect/1", 0.2), tap("preset/3", 0.3)], 1.0, ["Save with Background", "Copy"])
-    s.script("settings", "trigger", [tap("trigger/1", 0.2), tap("dpi/3", 0.4)], 0.8, ["Ctrl + drag", "300 dpi"])
-    saved = json.loads((s.out / "settings.json").read_text()) if (s.out / "settings.json").exists() else {}
-    s.check("settings saved to the test file", saved.get("trigger") == "ctrl" and saved.get("pdf_dpi") == 300)
-    return s.done("utsuri headless")
-
-
 def oumu() -> int:
     s = Suite("oumu")
     data = s.out / "data"
@@ -227,8 +183,6 @@ def oumu() -> int:
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     failed = 0
-    if which in ("utsuri", "all"):
-        failed += utsuri()
     if which in ("oumu", "all"):
         failed += oumu()
     sys.exit(1 if failed else 0)

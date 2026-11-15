@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Utsuri-Setup.exe and Oumu-Setup.exe (they carry the release builds)"
+description = "Oumu-Setup.exe (it carries the release build)"
 
 [dependencies]
 anyhow.workspace = true

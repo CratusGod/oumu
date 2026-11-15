@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/shared", "crates/utsuri-engine", "crates/utsuri", "crates/utsuri-e2e", "crates/oumu-rt", "crates/oumu", "crates/install", "crates/setup"]
+members = ["crates/shared", "crates/oumu-rt", "crates/oumu", "crates/install", "crates/setup"]
 exclude = ["spikes", "vendor"]
 
 [workspace.package]
