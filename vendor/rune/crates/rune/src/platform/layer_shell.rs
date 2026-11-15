@@ -427,6 +427,12 @@ impl LayerSurface {
         (!this.state.readiness.closed()).then_some(this)
     }
 
+    /// cratus-rs patch: the overlay's placement now (the copy taken at creation went stale
+    /// once a placed surface moved without being recreated).
+    pub fn set_placement(&mut self, placement: Option<crate::OverlayPlacement>) {
+        self.options.placement = placement;
+    }
+
     pub fn place(&mut self, at: Placement) {
         match self.options.placement {
             Some(OverlayPlacement::FullScreen) => {

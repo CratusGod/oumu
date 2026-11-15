@@ -576,6 +576,7 @@ impl<T: 'static> Overlay<T> {
             }
             #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
             Backing::Layer(layer) => {
+                layer.set_placement(self.options.placement);
                 layer.place(self.at);
                 layer.commit();
             }

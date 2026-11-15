@@ -167,19 +167,57 @@ fn on_screen(app: &AppHandle, x: f64) -> bool {
     x >= mx - 1.0 && x + PANEL_W <= mx + mw + 1.0
 }
 
+/// Linux (Hyprland): a shown panel takes a few frames to map. Sliding before then, the
+/// first steps went by unseen and the panel appeared half way in.
+#[cfg(target_os = "linux")]
+fn wait_for_panel_window() {
+    use crate::linux::hyprland;
+    if !hyprland::available() {
+        return;
+    }
+    let end = std::time::Instant::now() + PANEL_MAP_WAIT;
+    while std::time::Instant::now() < end {
+        if hyprland::own_window("Oumu").is_some() {
+            // one more frame: the UI loop places it at the slide's start, then shows it
+            std::thread::sleep(Duration::from_millis(SLIDE_STEP_MS * 2));
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(4));
+    }
+}
+
+#[cfg(target_os = "linux")]
+const PANEL_MAP_WAIT: Duration = Duration::from_millis(400);
+
 fn slide(app: &AppHandle, from: f64, to: f64, y: f64, gen: u64) -> bool {
-    for i in 1..=SLIDE_STEPS {
+    // Linux (Hyprland): the slide moves the window itself, about once per refresh; the UI
+    // loop's placement check alone moved it every other frame at best.
+    #[cfg(target_os = "linux")]
+    let own = crate::linux::hyprland::own_window("Oumu");
+    #[cfg(target_os = "linux")]
+    let (steps, step_ms) = if own.is_some() { (SLIDE_STEPS * SLIDE_STEP_MS as u32 / LINUX_STEP_MS as u32, LINUX_STEP_MS) } else { (SLIDE_STEPS, SLIDE_STEP_MS) };
+    #[cfg(not(target_os = "linux"))]
+    let (steps, step_ms) = (SLIDE_STEPS, SLIDE_STEP_MS);
+    for i in 1..=steps {
         if ANIM_GEN.load(Ordering::SeqCst) != gen {
             return false;
         }
-        let t = i as f64 / SLIDE_STEPS as f64;
+        let t = i as f64 / steps as f64;
         let eased = 1.0 - (1.0 - t).powi(3);
         let x = from + (to - from) * eased;
         wm::set_position(app, "panel", x, y);
-        std::thread::sleep(Duration::from_millis(SLIDE_STEP_MS));
+        #[cfg(target_os = "linux")]
+        if let Some(w) = &own {
+            crate::linux::hyprland::move_own(w, x, y);
+        }
+        std::thread::sleep(Duration::from_millis(step_ms));
     }
     true
 }
+
+/// One slide step on Linux: about a frame at 180 Hz.
+#[cfg(target_os = "linux")]
+const LINUX_STEP_MS: u64 = 6;
 
 /// Slide the panel away behind the edge tab (`tucked = true`) or out from the
 /// edge (`tucked = false`). Runs on its own thread so the caller never blocks;
@@ -228,6 +266,8 @@ pub fn set_tucked(app: &AppHandle, side: &str, tucked: bool, animate: bool, focu
                     let from = offscreen_x(&app, &side);
                     wm::set_position(&app, "panel", from, ty);
                     wm::show(&app, "panel");
+                    #[cfg(target_os = "linux")]
+                    wait_for_panel_window();
                     if !slide(&app, from, tx, ty, gen) {
                         return;
                     }

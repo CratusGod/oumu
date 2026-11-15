@@ -268,7 +268,9 @@ mod tests {
         assert!(safe_selector("pid:42"));
         assert!(!safe_selector("address:0x1\" }) hl.dsp.exec_cmd(\"rm"));
         assert!(!panel_rule("Oumu\" }) hl.dsp.exec_cmd(\"rm", 0.0, 0.0, 1.0, 1.0));
-        assert_eq!(panel_rule_lua("Oumu", 12, 40, 440, 740), "eval hl.window_rule({ name = \"oumu-panel\", match = { class = \"^$\", title = \"^Oumu$\" }, float = true, pin = true, size = { \"440\", \"740\" }, move = { \"12\", \"40\" } })");
+        assert!(!layer_slide_rule("Oumu\" }) x", "left"));
+        assert_eq!(panel_rule_lua("Oumu", -460, 40, 440, 740), "eval hl.window_rule({ name = \"oumu-panel\", match = { class = \"^$\", title = \"^Oumu$\" }, float = true, pin = true, no_anim = true, opacity = \"0.0 override\", size = { \"440\", \"740\" }, move = { \"-460\", \"40\" } })");
+        assert_eq!(layer_slide_lua("Oumu tab", edge("anything")), "eval hl.layer_rule({ name = \"oumu-tab\", match = { namespace = \"^Oumu tab$\" }, animation = \"slide left\" })");
         assert!(!safe_selector(""));
     }
 
@@ -335,10 +337,12 @@ pub fn place_own(w: &OwnWindow, x: f64, y: f64, width: f64, height: f64) -> bool
     ok
 }
 
-/// Register (or replace) a runtime rule so the panel window maps floating, pinned and at
-/// its rect. Placed by a rule, Hyprland's own open and close animations play where the
-/// panel is; placed after mapping, it first tiled (reflowing the other windows), then
-/// jumped. The rule lives until the config reloads; it is sent again before every show.
+/// Register (or replace) a runtime rule so the panel window maps floating and pinned at its
+/// rect, with Hyprland's own animations off: Oumu slides it in and out itself (a move per
+/// frame), as on Windows. Ryoku's open curve moves a window most of the way while it is
+/// still nearly transparent, so a compositor slide read as a fade; placed after mapping,
+/// the panel first tiled, reflowing the other windows. The rule lives until the config
+/// reloads; it is sent again before every show.
 pub fn panel_rule(title: &str, x: f64, y: f64, width: f64, height: f64) -> bool {
     if !title.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
         return false;
@@ -348,7 +352,36 @@ pub fn panel_rule(title: &str, x: f64, y: f64, width: f64, height: f64) -> bool 
 }
 
 fn panel_rule_lua(title: &str, x: i64, y: i64, w: i64, h: i64) -> String {
-    format!("eval hl.window_rule({{ name = \"oumu-panel\", match = {{ class = \"^$\", title = \"^{title}$\" }}, float = true, pin = true, size = {{ \"{w}\", \"{h}\" }}, move = {{ \"{x}\", \"{y}\" }} }})")
+    format!("eval hl.window_rule({{ name = \"oumu-panel\", match = {{ class = \"^$\", title = \"^{title}$\" }}, float = true, pin = true, no_anim = true, opacity = \"0.0 override\", size = {{ \"{w}\", \"{h}\" }}, move = {{ \"{x}\", \"{y}\" }} }})")
+}
+
+/// A layer surface (`namespace`) slides in from and out to the screen edge `side`.
+pub fn layer_slide_rule(namespace: &str, side: &str) -> bool {
+    if !namespace.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
+        return false;
+    }
+    ok(request(&layer_slide_lua(namespace, edge(side))))
+}
+
+fn layer_slide_lua(namespace: &str, side: &str) -> String {
+    let name = namespace.to_lowercase().replace(' ', "-");
+    format!("eval hl.layer_rule({{ name = \"{name}\", match = {{ namespace = \"^{namespace}$\" }}, animation = \"slide {side}\" }})")
+}
+
+fn edge(side: &str) -> &'static str {
+    if side == "right" { "right" } else { "left" }
+}
+
+/// Move our window to (x, y) in layout px (one step of a slide).
+pub fn move_own(w: &OwnWindow, x: f64, y: f64) -> bool {
+    let sel = format!("address:{}", w.address);
+    safe_selector(&sel) && ok_reply(&format!("hl.dsp.window.move({{ x = {}, y = {}, exact = true, window = \"{sel}\" }})", x.round() as i64, y.round() as i64))
+}
+
+/// Undo the panel rule's transparency.
+pub fn set_opaque(w: &OwnWindow) -> bool {
+    let sel = format!("address:{}", w.address);
+    safe_selector(&sel) && ok_reply(&format!("hl.dsp.window.set_prop({{ prop = \"opacity\", value = \"1.0\", window = \"{sel}\" }})"))
 }
 
 fn ok_reply(lua: &str) -> bool {

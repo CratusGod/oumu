@@ -233,6 +233,8 @@ pub struct Front {
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct HyprPanel {
+    /// the panel maps transparent (its rule); made opaque once it is where the slide starts
+    opaque: bool,
     want: Option<(f64, f64, f64, f64)>,
     since: Option<std::time::Instant>,
     checked: Option<std::time::Instant>,
@@ -241,6 +243,10 @@ struct HyprPanel {
 /// How often the panel's real place is compared with the wanted one.
 #[cfg(target_os = "linux")]
 const HYPR_CHECK: Duration = Duration::from_millis(100);
+/// Just after a show or move is asked: check every tick, so a panel that mapped off screen
+/// starts its slide in at once.
+#[cfg(target_os = "linux")]
+const HYPR_CHECK_SETTLING: Duration = Duration::from_millis(16);
 /// For this long after a move is asked, a different place means "not there yet"; after it,
 /// it means the user moved the panel.
 #[cfg(target_os = "linux")]
@@ -521,12 +527,23 @@ impl Front {
             }
             self.applied[i] = st.seq;
             if st.visible {
+                // the tab slides in from its edge (and back out), like the panel
+                #[cfg(target_os = "linux")]
+                if label == "tab" && !crate::linux::hyprland::layer_slide_rule("Oumu tab", &self.dock_side()) {
+                    log::debug!("hyprland didn't take the tab rule");
+                }
                 ov.set_placement(Some(OverlayPlacement::Rect { x: st.x as f32, y: st.y as f32, width: st.w.max(1.0) as f32, height: st.h.max(1.0) as f32 }));
                 ov.show();
             } else {
                 ov.hide();
             }
         }
+    }
+
+    /// The screen edge the panel docks on ("left" or "right").
+    #[cfg(target_os = "linux")]
+    fn dock_side(&self) -> String {
+        self.shared.lock().map(|s| s.settings.dock_side.clone()).unwrap_or_else(|_| "left".into())
     }
 
     /// Linux: float, pin and move the panel through Hyprland until it is where the logic
@@ -537,10 +554,13 @@ impl Front {
         let Some(st) = self.app.window_state("panel") else { return };
         if !st.visible {
             self.hypr.want = None;
+            self.hypr.opaque = false;
             return;
         }
         let now = std::time::Instant::now();
-        if self.hypr.checked.is_some_and(|t| now - t < HYPR_CHECK) {
+        let settling_now = self.hypr.since.is_some_and(|t| now - t < HYPR_SETTLE);
+        let every = if settling_now { HYPR_CHECK_SETTLING } else { HYPR_CHECK };
+        if self.hypr.checked.is_some_and(|t| now - t < every) {
             return;
         }
         self.hypr.checked = Some(now);
@@ -553,18 +573,22 @@ impl Front {
         let Some(w) = hyprland::own_window("Oumu") else { return };
         let at = (w.at[0], w.at[1], w.size[0], w.size[1]);
         let off = (at.0 - want.0).abs().max((at.1 - want.1).abs()).max((at.2 - want.2).abs()).max((at.3 - want.3).abs());
-        if off <= HYPR_SLACK && w.floating && w.pinned {
-            return;
-        }
-        let settling = self.hypr.since.is_some_and(|t| now - t < HYPR_SETTLE);
-        if settling || !w.floating || !w.pinned {
-            if !hyprland::place_own(&w, want.0, want.1, want.2, want.3) {
-                log::debug!("hyprland didn't take the panel placement");
+        if off > HYPR_SLACK || !w.floating || !w.pinned {
+            let settling = self.hypr.since.is_some_and(|t| now - t < HYPR_SETTLE);
+            if settling || !w.floating || !w.pinned {
+                if !hyprland::place_own(&w, want.0, want.1, want.2, want.3) {
+                    log::debug!("hyprland didn't take the panel placement");
+                }
+            } else {
+                // the user dragged or resized it: that is the panel's place now
+                self.hypr.want = Some(at);
+                self.app.report_frame("panel", at.0, at.1, at.2, at.3);
             }
-        } else {
-            // the user dragged or resized it: that is the panel's place now
-            self.hypr.want = Some(at);
-            self.app.report_frame("panel", at.0, at.1, at.2, at.3);
+        }
+        // Hyprland maps a window on screen whatever the rule asks, so the panel maps
+        // transparent and shows only now, at the slide's first step (moved in the same turn)
+        if !self.hypr.opaque {
+            self.hypr.opaque = hyprland::set_opaque(&w);
         }
     }
 

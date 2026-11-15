@@ -85,11 +85,10 @@ pub(crate) mod plain {
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub fn release_keyboard(_app: &AppHandle, _label: &str) {}
 
-    /// Linux: no. A Wayland app can't move its own window frame by frame (Hyprland moves
-    /// it, ~100 ms per step, and the close animation then played off screen); the
-    /// compositor's own open and close animations play instead.
+    /// Linux too: Hyprland moves the panel each frame of the slide (ui::place_panel_hyprland),
+    /// with its own animations off for the panel.
     pub fn animates_slide() -> bool {
-        !cfg!(target_os = "linux")
+        true
     }
 }
 

@@ -398,7 +398,14 @@ impl<T: 'static> Overlay<T> {
         }
         let options_changed = requests.placement.is_some() || requests.display.is_some();
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
-        let recreate_layer = options_changed && matches!(self.surface.live().map(|l| &l.backing), Some(Backing::Layer(_)));
+        // cratus-rs patch: a rect moving to another rect keeps its layer surface (size, anchor
+        // and margins can change on a live one); recreating it made the compositor play its
+        // close and open animations on every step of a slide.
+        let rect_to_rect = matches!((self.options.placement, requests.placement), (Some(crate::OverlayPlacement::Rect { .. }), Some(Some(crate::OverlayPlacement::Rect { .. }))));
+        #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+        let recreate_layer = (requests.display.is_some() || (requests.placement.is_some() && !rect_to_rect)) && matches!(self.surface.live().map(|l| &l.backing), Some(Backing::Layer(_)));
+        #[cfg(not(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))))]
+        let _ = rect_to_rect;
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
         let layer_was_visible = self.presence.shown();
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
@@ -429,6 +436,7 @@ impl<T: 'static> Overlay<T> {
                     }
                     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
                     Some(Backing::Layer(layer)) => {
+                        layer.set_placement(self.options.placement);
                         layer.place(at);
                         layer.commit();
                     }
