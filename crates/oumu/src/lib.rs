@@ -50,6 +50,13 @@ pub fn run() {
         }
         return;
     }
+    // a crash writes where it happened (temp folder); test runs get no crash box
+    #[cfg(windows)]
+    {
+        let quiet = ui::headless::wanted() || std::env::var_os("OUMU_DATA_DIR").is_some();
+        win::crash::install(quiet);
+        win::crash::self_test();
+    }
     // headless renders, scripts and trees (Rune's tooling): every surface as a window
     if ui::headless::wanted() {
         ui::headless::main();

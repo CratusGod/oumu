@@ -68,6 +68,16 @@
   1.8-6.5 s); Oumu memory stays flat (see (1)). Also: unkeyed siblings morph into each other
   in Rune (Oumu's tab lip turned into the icon's box: a cyan block fading out); key them.
   `[profile.fast]` + `CRATUS_PROFILE=fast` for test builds (~12 min, not ~27).
+- **(4) FIXED 2026-11-15: overlays come back after a GPU driver reset** (`overlay/surface.rs`
+  `regain`, cratus-rs patch). A driver update removed the GPU device under a running Oumu;
+  Rune hid each overlay whose surface then refused to configure and waited for the app to
+  show it again, which Oumu never does for its tab and button (and the old build crashed:
+  "Oumu suggestion: Application Error", no log). Now a Windows overlay that lost its device
+  while shown shows itself again on a new one: first try after 300 ms, then once a second
+  for 2 min. Test it with `RUNE_TEST_REMOVE_DEVICE_MS=<ms>` (`render/gpu_loss.rs`), which
+  removes every device made before that time (`ID3D12Device5::RemoveDevice`), as a driver
+  update does; both E2E suites pass with it. Oumu now has the crash logger too
+  (`win/crash.rs`, `%TEMP%oumu-crash-<pid>.txt`; `OUMU_CRASH_TEST=1` crashes on purpose).
 - History: **Slow tool windows, cause found (2026-11-14 16:35)**, with `RUNE_OPEN_TRACE=1` plus
   `cratus_trace` points in `vendor/rune/vendor/wgpu-hal/src/dx12/mod.rs`: the DX12 part of
   `surface.configure` (queue idle, CreateSwapChainForComposition, DComp) takes 3 ms. The
@@ -143,6 +153,8 @@ UTSURI_SETTINGS, UTSURI_STATE_DIR, UTSURI_FAKE_TRASH, UTSURI_PIPE, UTSURI_LOG,
 UTSURI_NO_LAUNCH, UTSURI_NO_WELCOME, UTSURI_E2E (logs toast button rects),
 UTSURI_DEMO*,
 UTSURI_THEME (headless), `utsuri.exe --cli rings|run|fixtures|selftest`.
+RUNE_TEST_REMOVE_DEVICE_MS (a GPU driver reset, on demand), UTSURI_E2E_STDERR / OUMU_E2E_STDERR
+(keep the app's stderr in E2E runs),
 OUMU_DATA_DIR (keeps tests off the user's settings; headless runs default to a temp
 folder), OUMU_E2E (logs the card's Accept point), OUMU_THEME (headless), OUMU_E2E_KEY.
 

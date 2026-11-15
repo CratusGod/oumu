@@ -333,10 +333,45 @@ impl<T: 'static> Overlay<T> {
     /// Its surface refused a new configuration: the overlay hides and drops it, so wgpu never
     /// panics on its next drawable. The next show tries a new one.
     pub(super) fn surface_refused(&mut self, reason: String) {
+        // cratus-rs patch: refused because its device died while shown: show it again on a new
+        // device once one can be made (`regain_due`)
+        let lost_while_shown = self.presence.shown() && self.gpu.as_ref().is_some_and(|gpu| gpu.is_lost());
         self.hide();
         self.release();
         self.fail(reason);
+        if lost_while_shown && cfg!(target_os = "windows") {
+            self.regain = Some((Instant::now() + REGAIN_FIRST, 0));
+        }
     }
+
+    /// cratus-rs patch: tries to show again an overlay whose device was lost while shown, until
+    /// a new device takes (a driver install can leave no usable GPU for a while).
+    pub(super) fn regain_due(&mut self, event_loop: &ActiveEventLoop) {
+        let Some((at, tries)) = self.regain else { return };
+        if Instant::now() < at { return; }
+        self.regain = None;
+        self.show_fading(event_loop, Duration::ZERO);
+        if self.surface.live().is_some() && self.presence.shown() {
+            eprintln!("rune: overlay {} is back on a new GPU device", self.name);
+        } else if tries + 1 < REGAIN_TRIES {
+            self.regain = Some((Instant::now() + REGAIN_EVERY, tries + 1));
+        } else {
+            eprintln!("rune: overlay {} gave up waiting for a GPU device", self.name);
+        }
+    }
+
+    /// The app asked for a show or hide itself: that replaces a pending regain.
+    pub(super) fn cancel_regain(&mut self) { self.regain = None; }
+
+    pub(super) fn regain_deadline(&self) -> Option<Instant> { self.regain.map(|(at, _)| at) }
+}
+
+/// cratus-rs patch: the first try soon after the loss, then once a second for two minutes.
+const REGAIN_FIRST: Duration = Duration::from_millis(300);
+const REGAIN_EVERY: Duration = Duration::from_secs(1);
+const REGAIN_TRIES: u32 = 120;
+
+impl<T: 'static> Overlay<T> {
 
     /// Drops the surface and every native owner of its window; the next show makes new ones.
     pub(super) fn release(&mut self) {

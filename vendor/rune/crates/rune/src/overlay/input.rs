@@ -451,8 +451,8 @@ impl<T: 'static> Overlay<T> {
             if let Some(panel) = &self.panel { panel.set_level(level); }
         }
         match requests.visibility {
-            Some(Visibility::Show(fade)) => self.show_fading(event_loop, fade),
-            Some(Visibility::Hide(fade)) => self.hide_fading(fade),
+            Some(Visibility::Show(fade)) => { self.cancel_regain(); self.show_fading(event_loop, fade) }
+            Some(Visibility::Hide(fade)) => { self.cancel_regain(); self.hide_fading(fade) }
             None => {}
         }
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]

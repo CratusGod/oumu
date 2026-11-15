@@ -5,6 +5,7 @@ pub mod apply;
 pub mod autostart;
 pub mod ax;
 pub mod clip;
+pub mod crash;
 pub mod focus;
 pub mod remote;
 pub mod startup;

@@ -371,6 +371,10 @@ pub(crate) struct Overlay<T: 'static> {
     /// to ~680 submits a second during a drag, which backed the shared GPU queue up and made
     /// a new window wait seconds in `configure_surface` for it to drain.
     pace_until: Option<Instant>,
+    /// cratus-rs patch (Windows): a shown overlay whose GPU device was lost (a driver update or
+    /// reset) shows itself again on a new device: when to try next, and how many tries so far.
+    /// Without it the overlay stayed hidden until the app asked for another show.
+    regain: Option<(Instant, u32)>,
     #[cfg(target_os = "macos")]
     frame_wake: Option<Waker>,
     meter: crate::frame::surface_stats::SurfaceMeter,
@@ -446,6 +450,7 @@ impl<T: 'static> Overlay<T> {
             backoff: Default::default(),
             hidden_pace: Default::default(),
             pace_until: None,
+            regain: None,
             #[cfg(target_os = "macos")]
             frame_wake: None,
             meter,

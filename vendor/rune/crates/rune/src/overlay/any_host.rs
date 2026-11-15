@@ -4,8 +4,10 @@
 use super::*;
 
 impl<T: 'static> AnyHost for Overlay<T> {
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         self.meter.turn(matches!(cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll), crate::frame::surface_stats::slept(cause));
+        // cratus-rs patch: an overlay whose GPU device was lost while shown comes back
+        self.regain_due(event_loop);
         #[cfg(target_os = "macos")]
         { self.occlusion_read = false; }
         if matches!(cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll) {
@@ -29,7 +31,9 @@ impl<T: 'static> AnyHost for Overlay<T> {
         deadline.into_iter().chain(self.backoff.deadline().filter(|_| self.presence.drawing())).chain(self.presence.deadline())
             .chain(self.hidden_pace.deadline().filter(|_| !self.presence.drawing()))
             // cratus-rs patch: a frame held back by the pacing (draw.rs) draws when it's due
-            .chain(self.pace_until.filter(|_| self.dirty && self.presence.drawing())).min()
+            .chain(self.pace_until.filter(|_| self.dirty && self.presence.drawing()))
+            // cratus-rs patch: the next try to show an overlay whose device was lost
+            .chain(self.regain_deadline()).min()
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {

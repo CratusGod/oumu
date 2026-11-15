@@ -38,6 +38,8 @@ impl Gpu {
             eprintln!("rune: the GPU device was lost ({reason:?}): {message}");
         });
         if draws_surfaces && !cfg!(test) { log_uncaptured(&device); }
+        #[cfg(target_os = "windows")]
+        if draws_surfaces { test_removal(&device); }
         Gpu { instance, adapter, device, queue, lost }
     }
 
@@ -45,6 +47,36 @@ impl Gpu {
     /// Nothing can be drawn with it, and its surfaces can't be configured, so its owner makes a
     /// new GPU and surface instead (`Host::reattach`).
     pub fn is_lost(&self) -> bool { self.lost.load(Ordering::Acquire) }
+}
+
+/// cratus-rs patch: `RUNE_TEST_REMOVE_DEVICE_MS=<ms>` removes every surface device made before
+/// that many milliseconds after the first one, at that moment (`ID3D12Device5::RemoveDevice`):
+/// what a driver update or a driver reset does to a running app, on demand, for tests. Devices
+/// made after it (the recovery's) are left alone.
+#[cfg(target_os = "windows")]
+fn test_removal(device: &wgpu::Device) {
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+    static DEADLINE: OnceLock<Option<Instant>> = OnceLock::new();
+    let deadline = *DEADLINE.get_or_init(|| {
+        let ms = std::env::var("RUNE_TEST_REMOVE_DEVICE_MS").ok()?.parse::<u64>().ok()?;
+        Some(Instant::now() + Duration::from_millis(ms))
+    });
+    let Some(deadline) = deadline else { return };
+    if Instant::now() >= deadline { return; }
+    let device = device.clone();
+    let _ = std::thread::Builder::new().name("rune-test-remove".into()).spawn(move || {
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        use windows::core::Interface;
+        // SAFETY: the raw device is only borrowed for the call; RemoveDevice is thread-safe.
+        unsafe {
+            let Some(hal) = device.as_hal::<wgpu::hal::api::Dx12>() else { return };
+            if let Ok(d5) = hal.raw_device().cast::<windows::Win32::Graphics::Direct3D12::ID3D12Device5>() {
+                eprintln!("rune: test: removing a GPU device, as a driver update would");
+                d5.RemoveDevice();
+            }
+        }
+    });
 }
 
 /// What `log_uncaptured` has printed: each distinct message once, up to `PRINTED`, then one
