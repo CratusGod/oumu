@@ -120,6 +120,8 @@ pub struct PanelS {
     /// the text the AI Rewriter last scanned and Tone last ran on (they re-run as it changes)
     rw_scanned: Option<String>,
     tone_ran: Option<String>,
+    /// Headless runs: the update status and banner to show (the real ones are app-wide).
+    pub upd_demo: Option<(crate::update::Status, Option<String>)>,
 }
 
 impl PanelS {
@@ -176,6 +178,7 @@ impl PanelS {
             brave: TextEdit::new(s.search.brave_key.clone()),
             searx_probe: None,
             autostart: None,
+            upd_demo: None,
             rw_scanned: None,
             tone_ran: None,
         }
@@ -315,7 +318,13 @@ pub fn view(s: &S, cx: &mut Cx<S>) -> El {
     let m = s.model.lock().unwrap();
     let st = s.settings();
     let rail_left = st.rail_side == "left";
-    let mut content = col().key("content").grow(1.0).min_w(0.0).h_full().min_h(0.0).child(body(s, &m, &st, cx));
+    let mut content = col().key("content").grow(1.0).min_w(0.0).h_full().min_h(0.0);
+    if s.view != "onboarding" {
+        if let Some(v) = upd_banner(s) {
+            content = content.child(update_banner(&v, k));
+        }
+    }
+    content = content.child(body(s, &m, &st, cx));
     if let Some((msg, _)) = &s.toast {
         content = content.child(row().key("toast").pin(Some(16.0), None, Some(16.0), Some(16.0)).radius(10.0).px(14.0).py(10.0).fill(c(k.bg_sunken())).border(1.0, c(k.border)).child(p(msg.clone(), 14.0, k.text)));
     }
@@ -327,6 +336,39 @@ pub fn view(s: &S, cx: &mut Cx<S>) -> El {
     let mut r = row().key("panel").w_full().h_full().radius(14.0).clip_rounded(14.0).border(1.0, c(k.border_subdued)).child(back).child(glow1).child(glow2);
     r = if rail_left { r.child(rail).child(content) } else { r.child(content).child(rail) };
     r
+}
+
+fn upd_status(s: &S) -> crate::update::Status {
+    s.upd_demo.as_ref().map_or_else(crate::update::status, |d| d.0.clone())
+}
+
+fn upd_banner(s: &S) -> Option<String> {
+    s.upd_demo.as_ref().map_or_else(crate::update::banner, |d| d.1.clone())
+}
+
+/// A newer Oumu: a strip at the top of the panel with Update and Later.
+fn update_banner(v: &str, k: &Tok) -> El {
+    row()
+        .key("update-banner")
+        .w_full()
+        .items_center()
+        .gap(10.0)
+        .px(14.0)
+        .py(10.0)
+        .fill(c(k.brand_tint()))
+        .border_sides([0.0, 0.0, 1.0, 0.0], c(k.border_subdued))
+        .child(col().grow(1.0).min_w(0.0).child(tb(&format!("Oumu {v} is available"), 14.0, k.text)).child(p("Oumu closes and opens again by itself.", 12.5, k.text_subdued)))
+        .child(btn("update-now", Btn::Primary, "Update", k).px(12.0).py(6.0).on_press(|s: &mut S| {
+            if s.upd_demo.is_none() {
+                crate::update::install();
+            }
+        }))
+        .child(btn("update-later", Btn::Ghost, "Later", k).px(10.0).py(6.0).on_press(|s: &mut S| {
+            match &mut s.upd_demo {
+                Some(d) => d.1 = None,
+                None => crate::update::later(),
+            }
+        }))
 }
 
 /// Keys no control used: Esc tucks the panel away.
@@ -1639,6 +1681,7 @@ fn toggle_row(key: &'static str, label: &str, on: bool, k: &Tok) -> El {
         match key {
             "auto-spot" => st.auto_spot_check = !st.auto_spot_check,
             "show-button" => st.show_button = !st.show_button,
+            "check-updates" => st.check_updates = !st.check_updates,
             _ => st.show_underlines = !st.show_underlines,
         }
         s.save(st);
@@ -1766,6 +1809,29 @@ fn settings_view(s: &S, st: &crate::settings::Settings) -> El {
             Err(e) => s.say(e),
         }));
     }
+    c_ = c_.child(toggle_row("check-updates", "Check for updates automatically", st.check_updates, k));
+    let (note, found) = match upd_status(s) {
+        crate::update::Status::Idle => (format!("Oumu {}", crate::update::current()), None),
+        crate::update::Status::Checking => ("Checking for updates…".to_string(), None),
+        crate::update::Status::UpToDate => (format!("Oumu {} is the newest version.", crate::update::current()), None),
+        crate::update::Status::Found(r) => (format!("Oumu {} is available (you have {}).", r.version, crate::update::current()), Some(r.version)),
+        crate::update::Status::Downloading(v) => (format!("Downloading Oumu {v}…"), None),
+        crate::update::Status::Failed(e) => (e, None),
+    };
+    let mut urow = row().key("update-row").w_full().mt(10.0).gap(10.0).items_center();
+    urow = match found {
+        Some(_) => urow.child(btn("update-install", Btn::Primary, "Update now", k).px(12.0).py(6.0).on_press(|s: &mut S| {
+            if s.upd_demo.is_none() {
+                crate::update::install();
+            }
+        })),
+        None => urow.child(btn("update-check", Btn::Outline, "Check for updates", k).px(12.0).py(6.0).on_press(|s: &mut S| {
+            if s.upd_demo.is_none() {
+                crate::update::check(true);
+            }
+        })),
+    };
+    c_ = c_.child(urow.child(p(note, 13.0, k.text_subdued).grow(1.0).min_w(0.0)));
     c_ = c_.child(row().mt(12.0).child(btn("quit", Btn::Ghost, "Quit Oumu", k).on_press(|s: &mut S| s.app.exit(0))));
     col().w_full().h_full().child(titlebar("Settings", vec![], k)).child(scroll(c_))
 }

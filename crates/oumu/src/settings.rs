@@ -96,6 +96,8 @@ pub struct Settings {
     pub show_button: bool,
     pub show_underlines: bool,
     pub onboarded: bool,
+    /// Look for a newer version on GitHub now and then.
+    pub check_updates: bool,
     /// Run the sentence spot check by itself when typing pauses.
     pub auto_spot_check: bool,
     /// Apps Oumu stays out of (added from the Review view's "Skip this app").
@@ -135,6 +137,7 @@ impl Default for Settings {
             show_button: true,
             show_underlines: true,
             onboarded: false,
+            check_updates: true,
             auto_spot_check: true,
             skip_apps: vec![],
             theme: "default".into(),

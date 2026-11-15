@@ -104,6 +104,48 @@ function Test-App($name, $setup, $exeName, [bool]$hasShell) {
     Start-Sleep -Seconds 4
     Check "installed app runs" (-not $proc.HasExited)
 
+    # an in-app update: a local release list offers this same setup as "v99.0.0"; the running
+    # copy (claiming 0.0.1) downloads it, checks its SHA-256, runs it over its own install,
+    # quits, and the setup starts it again. Start at sign-in (and Utsuri's right-click entry)
+    # is off first and must stay off.
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    $upd = Join-Path $sandbox "update-$name"
+    New-Item -ItemType Directory -Force $upd | Out-Null
+    $sha = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLower()
+    $asset = "$name-Setup.exe"
+    $feed = Join-Path $upd "feed.json"
+    ('{"tag_name":"v99.0.0","html_url":"","assets":[{"name":"' + $asset + '","browser_download_url":"file:///' + $setup.Replace([char]92, [char]47) + '","digest":"sha256:' + $sha + '"}]}') | Out-File -Encoding ascii $feed
+    Remove-ItemProperty -LiteralPath $run -Name $display -ErrorAction SilentlyContinue
+    if ($hasShell) { RunWait $exe "--unregister-shell `"$suffix`"" | Out-Null }
+    $P = $name.ToUpper()
+    Set-Item "Env:${P}_UPDATE_FEED" ("file:///" + $feed.Replace([char]92, [char]47))
+    Set-Item "Env:${P}_FAKE_VERSION" "0.0.1"
+    Set-Item "Env:${P}_UPDATE_AFTER_MS" "1500"
+    Set-Item "Env:${P}_UPDATE_YES" "1"
+    $log = if ($name -eq "Utsuri") { Join-Path $upd "log.txt" } else { Join-Path $env:OUMU_DATA_DIR "oumu.log" }
+    if ($name -eq "Utsuri") { $env:UTSURI_LOG = $log }
+    $stamp = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
+    $proc = Start-Process -FilePath $exe -ArgumentList "--quiet" -PassThru
+    foreach ($v in @("UPDATE_FEED", "FAKE_VERSION", "UPDATE_AFTER_MS", "UPDATE_YES")) { Remove-Item "Env:${P}_$v" -ErrorAction SilentlyContinue }
+    for ($i = 0; $i -lt 120 -and -not $proc.HasExited; $i++) { Start-Sleep -Milliseconds 500 }
+    Check "update: the app quit for its update" ($proc.HasExited)
+    $again = $null
+    for ($i = 0; $i -lt 60 -and -not $again; $i++) { Start-Sleep -Milliseconds 500; $again = Get-Process | Where-Object { $_.Path -eq $exe } | Select-Object -First 1 }
+    Check "update: the setup started it again" ($null -ne $again)
+    Check "update: the exe was replaced" ((Get-Item -LiteralPath $exe).LastWriteTimeUtc -gt $stamp)
+    Check "update: the exe matches the setup's build" ((Get-FileHash -LiteralPath $exe).Hash -eq (Get-FileHash -LiteralPath (Join-Path $rel $exeName.ToLower())).Hash)
+    $kp = Get-ItemProperty -LiteralPath (Join-Path $uninst $key) -ErrorAction SilentlyContinue
+    Check "update: Apps entry kept, same folder" ($kp -and $kp.InstallLocation -eq $dir -and $kp.UninstallString -eq "`"$exe`" --uninstall --suffix `"$suffix`"")
+    Check "update: start at sign-in stayed off" ($null -eq (Get-ItemProperty -LiteralPath $run).$display)
+    if ($hasShell) { Check "update: the right-click entry stayed off" (-not (Test-Path -LiteralPath "HKCU:\Software\Classes\*\shell\$key") -and -not (Test-Path -LiteralPath (Join-Path $sendTo "$display.lnk"))) }
+    $text = if (Test-Path -LiteralPath $log) { Get-Content -Raw -LiteralPath $log } else { "" }
+    Check "update: found, downloaded and checked, setup started (log)" ($text -match "update: 99\.0\.0 is available" -and $text -match "downloaded and checked" -and $text -match "setup started")
+    Start-Sleep -Seconds 3
+    Check "update: the restarted app stays up (no update loop)" ($again -and -not $again.HasExited)
+    if ($again) { $proc = $again }
+    Remove-Item Env:UTSURI_LOG -ErrorAction SilentlyContinue
+
     # uninstall the way Settings -> Apps does (silently); it must stop the running copy
     $code = RunWait $exe "--uninstall --silent --suffix `"$suffix`""
     Check "uninstall exit code 0 (got $code)" ($code -eq 0)
@@ -160,7 +202,7 @@ function Test-OldVersions {
     Check "old entry gone" (-not (Test-Path -LiteralPath $oldKey))
     Check "old uninstaller gone" (-not (Test-Path -LiteralPath $fake))
     $p = Get-ItemProperty -LiteralPath (Join-Path $uninst "Oumutest") -ErrorAction SilentlyContinue
-    Check "new Apps entry intact after the old uninstaller finished" ($p -and $p.UninstallString -like "`"$exe`" --uninstall*" -and $p.DisplayVersion -eq "0.2.0")
+    Check "new Apps entry intact after the old uninstaller finished" ($p -and $p.UninstallString -like "`"$exe`" --uninstall*" -and $p.DisplayVersion -eq "0.2.1")
     Check "new Run value intact" ((Get-ItemProperty -LiteralPath $run).$("Oumu" + $suffix) -like "`"$exe`"*")
     Remove-Test
     Check "cleaned up" (-not (Test-Path -LiteralPath $dir) -and -not (Test-Path -LiteralPath (Join-Path $uninst "Oumutest")))

@@ -31,13 +31,13 @@ pub struct AppInfo {
 pub const UTSURI: AppInfo = AppInfo {
     name: "Utsuri",
     exe: "Utsuri.exe",
-    version: "2.0.0",
+    version: "2.0.1",
     publisher: "CratusGod",
     autostart_args: "--quiet",
     old_keys: &["{9910EB1A-E5FE-43F9-B79D-1CAF25C3AF14}_is1"],
 };
 
-pub const OUMU: AppInfo = AppInfo { name: "Oumu", exe: "Oumu.exe", version: "0.2.0", publisher: "CratusGod", autostart_args: "", old_keys: &["Oumu"] };
+pub const OUMU: AppInfo = AppInfo { name: "Oumu", exe: "Oumu.exe", version: "0.2.1", publisher: "CratusGod", autostart_args: "", old_keys: &["Oumu"] };
 
 #[derive(Clone, Debug, Default)]
 pub struct Opts {
@@ -55,10 +55,12 @@ pub struct Opts {
     pub remove_old: bool,
     /// Tests: look for this uninstall key instead of the real old ones.
     pub old_key: Option<String>,
+    /// An update: give the app (this process id) a few seconds to quit by itself first.
+    pub wait_pid: Option<u32>,
 }
 
 impl Opts {
-    /// --dir <path>, --suffix <text>, --silent, --no-autostart, --launch, --ignore-old
+    /// --dir <path>, --suffix <text>, --silent, --no-autostart, --launch, --ignore-old, --wait-pid <pid>
     pub fn from_args(args: &[String]) -> Opts {
         let mut o = Opts { autostart: true, ..Default::default() };
         let mut i = 0;
@@ -77,6 +79,10 @@ impl Opts {
                 "--launch" => o.launch = true,
                 "--ignore-old" => o.ignore_old = true,
                 "--remove-old" => o.remove_old = true,
+                "--wait-pid" if i + 1 < args.len() => {
+                    o.wait_pid = args[i + 1].parse().ok();
+                    i += 1;
+                }
                 "--old-key" if i + 1 < args.len() => {
                     o.old_key = Some(args[i + 1].clone());
                     i += 1;
@@ -165,6 +171,18 @@ fn all_processes() -> Vec<(u32, String)> {
         let _ = CloseHandle(snap);
     }
     out
+}
+
+/// Wait until a process has ended (or the time is up).
+fn wait_exit(pid: u32, max: std::time::Duration) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::*;
+    unsafe {
+        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            let _ = WaitForSingleObject(h, max.as_millis() as u32);
+            let _ = CloseHandle(h);
+        }
+    }
 }
 
 /// Stop every copy of `exe` (they hold the file open).
@@ -299,6 +317,9 @@ pub fn install(app: &AppInfo, payload: &[u8], o: &Opts, after: impl FnOnce(&Path
     let dir = install_dir(app, o);
     std::fs::create_dir_all(&dir).with_context(|| format!("couldn't create {}", dir.display()))?;
     let exe = dir.join(app.exe);
+    if let Some(pid) = o.wait_pid {
+        wait_exit(pid, std::time::Duration::from_secs(10));
+    }
     stop(&exe);
     let tmp = dir.join(format!("{}.new", app.exe));
     std::fs::write(&tmp, payload).with_context(|| format!("couldn't write {}", tmp.display()))?;
@@ -354,6 +375,64 @@ fn write_entries(app: &AppInfo, o: &Opts, exe: &Path, dir: &Path, size: usize) -
     } else {
         let _ = run.delete_value(display(app, o));
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- updates
+
+/// How the running exe was installed (its folder, the suffix of a test install, whether it
+/// starts at sign-in), from its entry in Settings → Apps. None for a copy that wasn't
+/// installed (a build run from the target folder).
+pub fn installed_here(app: &AppInfo) -> Option<Opts> {
+    let me = std::env::current_exe().ok()?;
+    let dir = me.parent()?.to_path_buf();
+    let same = |a: &Path, b: &Path| a.to_string_lossy().trim_end_matches('\\').eq_ignore_ascii_case(b.to_string_lossy().trim_end_matches('\\'));
+    let hk = RegKey::predef(HKEY_CURRENT_USER);
+    let un = hk.open_subkey(UNINSTALL).ok()?;
+    for k in un.enum_keys().flatten() {
+        if !k.starts_with(app.name) {
+            continue;
+        }
+        let Ok(key) = un.open_subkey(&k) else { continue };
+        let loc: String = key.get_value("InstallLocation").unwrap_or_default();
+        let cmd: String = key.get_value("UninstallString").unwrap_or_default();
+        if loc.is_empty() || !same(Path::new(&loc), &dir) || !cmd.contains("--uninstall") {
+            continue;
+        }
+        let name: String = key.get_value("DisplayName").unwrap_or_default();
+        let suffix = name.strip_prefix(app.name).unwrap_or_default().to_string();
+        let o = Opts { dir: Some(dir.clone()), suffix, silent: true, launch: true, ..Default::default() };
+        let run: Option<String> = hk.open_subkey(RUN).and_then(|r| r.get_value(display(app, &o))).ok();
+        let autostart = run.is_some_and(|r| r.to_lowercase().contains(&me.to_string_lossy().to_lowercase()));
+        return Some(Opts { autostart, ..o });
+    }
+    None
+}
+
+/// Run a downloaded setup over this install, quietly, and start the app again after. The
+/// setup stops this process (it holds the exe open): the caller should quit soon anyway.
+pub fn start_update(app: &AppInfo, setup: &Path) -> Result<()> {
+    let o = installed_here(app).context("this copy isn't installed (it runs from a build folder), so it can't update itself")?;
+    let dir = o.dir.clone().context("no install folder")?;
+    let mut c = std::process::Command::new(setup);
+    c.arg("--silent").arg("--launch").arg("--dir").arg(&dir);
+    c.arg("--wait-pid").arg(std::process::id().to_string());
+    if !o.suffix.is_empty() {
+        c.arg("--suffix").arg(&o.suffix);
+    }
+    if !o.autostart {
+        c.arg("--no-autostart");
+    }
+    // the app the setup starts again must not inherit a test's update switches (it would
+    // update itself over and over)
+    for app in ["UTSURI", "OUMU"] {
+        for v in ["UPDATE_FEED", "FAKE_VERSION", "UPDATE_AFTER_MS", "UPDATE_YES"] {
+            c.env_remove(format!("{app}_{v}"));
+        }
+    }
+    // detached, in its own group: it outlives this process
+    c.creation_flags(NO_WINDOW | 0x0000_0008 | 0x0000_0200).current_dir(setup.parent().unwrap_or(Path::new(".")));
+    c.spawn().with_context(|| format!("couldn't start {}", setup.display()))?;
     Ok(())
 }
 

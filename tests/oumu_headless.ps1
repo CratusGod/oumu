@@ -56,7 +56,7 @@ function Tap($key, $t) { return '{"t":' + $t + ',"type":"tap","key":"' + $key + 
 Write-Host "== windows render"
 Run @("--list-windows") | Out-Null
 $list = Get-Content (Join-Path $out "stdout.txt") | Where-Object { $_ -and $_ -notmatch "^rune:" }
-$panels = @("review", "review-empty", "chat", "chat-thread", "plagiarism", "tone", "performance", "paraphraser", "paraphraser-result", "humanizer", "reactions", "translate", "explain", "rewriter", "detector", "detector-loading", "history", "onboarding", "settings")
+$panels = @("review", "review-empty", "chat", "chat-thread", "plagiarism", "tone", "performance", "paraphraser", "paraphraser-result", "humanizer", "reactions", "translate", "explain", "rewriter", "detector", "detector-loading", "history", "onboarding", "settings", "settings-update", "review-update")
 $surfaces = @("tab", "tab-open", "button", "button-linting", "card", "card-long", "card-mute")
 foreach ($w in $panels + $surfaces) {
     if ($list -notcontains $w) { Check "listed: $w" $false; continue }
@@ -105,6 +105,16 @@ Script "settings" "placeholders" @() 0.5 @("AQ.", "Optional, e.g. http://localho
 Script "settings" "advanced" @((Tap "advanced" 0.2)) 0.6 @("Base URL", "Test connection")
 Script "settings" "key-kind" @((Tap "key" 0.2), '{"t":0.3,"type":"type","text":"sk-ant-x"}') 1.2 @("Anthropic key")
 Script "settings" "name" @() 0.5 @("Name (used for the avatar and greetings)", "Dock side", "Icon rail")
+
+Write-Host "== updates"
+Script "settings" "update-controls" @() 0.5 @("Check for updates automatically", "Check for updates", "is the newest version")
+Script "settings-update" "update-found" @() 0.5 @("Oumu 0.2.1 is available (you have", "Update now")
+Script "review-update" "banner" @() 0.5 @("Oumu 0.2.1 is available", "Oumu closes and opens again by itself.", "Update", "Later")
+Script "review-update" "banner-later" @((Tap "update-later" 0.2)) 0.6 @("Oumu") @("Oumu 0.2.1 is available")
+Script "settings" "updates-off" @('{"t":0.2,"type":"wheel","x":200,"y":400,"dy":-3000}', (Tap "check-updates" 0.8)) 1.4 @()
+$sf = Get-ChildItem -Recurse -Filter settings.json $env:OUMU_DATA_DIR | Select-Object -First 1
+$saved = if ($sf) { Get-Content -Raw $sf.FullName | ConvertFrom-Json } else { $null }
+Check "turning automatic update checks off is saved" ($saved -and $saved.check_updates -eq $false)
 
 Write-Host "== overlays"
 Script "card" "spelling" @() 0.5 @("Correctness", "library", "Accept", "Dismiss", "Add to dictionary")

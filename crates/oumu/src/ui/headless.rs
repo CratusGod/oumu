@@ -143,6 +143,11 @@ pub fn main() {
     run(app, shared);
 }
 
+/// A newer version, as an update check would find it.
+fn demo_release() -> shared::update::Release {
+    shared::update::Release { version: "0.2.1".into(), url: "https://example.org/Oumu-Setup.exe".into(), name: "Oumu-Setup.exe".into(), sha256: "0".repeat(64), size: 1, page: String::new() }
+}
+
 pub fn run(app: tauri::AppHandle, shared: Shared) {
     let tk = tok(&shared);
     let surf = |open: bool| {
@@ -187,7 +192,9 @@ pub fn run(app: tauri::AppHandle, shared: Shared) {
         }),
         panel_window("history", "history", &app, &shared, None, |_| {}),
         panel_window("onboarding", "onboarding", &app, &shared, None, |_| {}),
-        panel_window("settings", "settings", &app, &shared, None, |_| {}),
+        panel_window("settings", "settings", &app, &shared, None, |s| s.upd_demo = Some((crate::update::Status::UpToDate, None))),
+        panel_window("settings-update", "settings", &app, &shared, None, |s| s.upd_demo = Some((crate::update::Status::Found(demo_release()), Some("0.2.1".into())))),
+        panel_window("review-update", "review", &app, &shared, None, |s| s.upd_demo = Some((crate::update::Status::Found(demo_release()), Some("0.2.1".into())))),
     ];
     windows.push(surf_window("tab", (40.0, 84.0), surf(false), layer::tab_view));
     windows.push(surf_window("tab-open", (40.0, 84.0), surf(true), layer::tab_view));

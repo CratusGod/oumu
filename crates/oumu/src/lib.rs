@@ -23,6 +23,7 @@ pub mod style_rules;
 pub mod textmap;
 pub mod theme;
 pub mod ui;
+pub mod update;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(windows)]

@@ -138,9 +138,9 @@ Rings match slice for slice. Organize pages got Python's "Select pages: 1-3, 7" 
 selects, never saves) and "Extract selection"; video Compress got its hint.
 
 ## Tests
-- `cargo test --workspace`: engine (43), Utsuri (9 + 6), Oumu (133).
-- Headless, no screen use: `tests/utsuri_headless.ps1` (67) and `tests/oumu_headless.ps1`
-  (88): every window renders, scripted taps/typing checked in the element tree, and no
+- `cargo test --workspace`: engine (44), Utsuri (10), shared (9), Oumu (138 + 9 shared).
+- Headless, no screen use: `tests/utsuri_headless.ps1` (73) and `tests/oumu_headless.ps1`
+  (98): every window renders, scripted taps/typing checked in the element tree, and no
   text sticks out of its container anywhere (`tests/overflow.ps1`).
   `oumu --list-windows`, `oumu --window review --snap review.png --scale 2`.
 - Real screen (only when the user says go): `cargo run -p utsuri-e2e` (65 cases, real
@@ -208,3 +208,27 @@ before merging.
   selections don't set PRIMARY on Wayland).
 - **Install:** `packaging/linux/install.sh` (~/.local/bin, icons, app entries, Dolphin
   service menu); `uninstall.sh`.
+
+## In-app updates (2026-11-15)
+- Both apps check github.com/CratusGod/<app> `releases/latest` (shared/src/update.rs, through
+  the system curl: no TLS crate added). A release offers an update when its tag `v<x.y.z>`
+  is newer than the running version and it carries `<App>-Setup.exe`. The download must match
+  the asset's SHA-256 (GitHub's `digest`, or `<App>-Setup.exe.sha256`), else it is refused.
+- Installing: `install::start_update` finds this copy's Apps entry (its folder, a test
+  suffix, whether it starts at sign-in) and runs the setup with `--silent --launch --dir ..
+  --wait-pid <app> [--no-autostart]`; the app quits, the setup replaces the exe and starts it.
+  A copy run from a build folder (no Apps entry) never checks by itself and can't update.
+- When: 30 s after start, then every 12 h, if Settings → "Check for updates automatically"
+  (default on); "Check for updates" in Settings and the tray any time. Utsuri shows a card
+  (Update / Later); Oumu a banner at the top of the panel, plus a status row in Settings.
+- Releasing: bump `crates/<app>/Cargo.toml` and `crates/install` (`AppInfo.version`; a unit
+  test checks they match), then `packaging\release.ps1 -Publish`. It builds with
+  `--remap-path-prefix` (dependency paths in panic strings carried `C:\Users\<name>\.cargo`),
+  refuses exes that still contain the home folder or user name, and makes the release.
+  The same RUSTFLAGS must be set for every cargo run on target\release, or cargo rebuilds all.
+- Tests: `shared` unit tests (versions, picking the asset, checksum refusal, file:// feeds);
+  headless update card / banner / Settings; `tests/install_test.ps1` runs a real update in the
+  sandbox install (a file:// release list offering v99.0.0 and this setup).
+- Env: <APP>_UPDATE_FEED (release list URL; file:// works), <APP>_FAKE_VERSION,
+  <APP>_UPDATE_AFTER_MS (first automatic look), <APP>_UPDATE_YES=1 (install without asking).
+  The setup strips these from the app it restarts, so a test can't loop.

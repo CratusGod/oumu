@@ -16,7 +16,13 @@ The Tauri version of Oumu is kept in this repo's history: tag `tauri-final`.
 
 ## Install on Windows
 
-Build the installer from source (there are no prebuilt downloads yet):
+Download `Oumu-Setup.exe` from the [latest release](https://github.com/CratusGod/oumu/releases/latest)
+and run it. It installs per user (no admin), adds a Start menu entry, starts with Windows, and
+can be removed from Settings > Apps. An installed Oumu updates itself: it looks for a new
+release a little after it starts and twice a day (turn that off in Settings), and "Update"
+downloads the new setup, checks its SHA-256 and installs it over the old one.
+
+Or build the installer from source:
 
 1. Install [Rust](https://rustup.rs) and the
    [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with
@@ -42,7 +48,9 @@ untested.
 
 ## Privacy
 
-- No accounts, telemetry or update checks.
+- No accounts or telemetry. Besides the AI and search features you use, the only network use
+  is the update check, which asks GitHub for the newest release of this repo (turn it off
+  in Settings).
 - Spelling and grammar checks run on your PC ([Harper](https://writewithharper.com)). Text
   leaves your PC only when you use an AI tool (it goes to the AI provider you set up, with your
   key) or the plagiarism check (short quotes go to a web search).
@@ -64,6 +72,9 @@ cargo run -p oumu
   `tests\oumu_e2e.ps1` and `tests\install_test.ps1` on Windows, `tests/linux/oumu_e2e.py` on
   Linux. Every AI tool with every option: `tests/linux/oumu_ai_all.py` (uses your AI key,
   never printed).
+- A release: bump the version in `crates/oumu/Cargo.toml` and `crates/install` (a unit test
+  checks they match), then `packaging\release.ps1 -Publish` builds the setup, checks it
+  carries no paths from the build PC, and makes the GitHub release the updater reads.
 - Design notes, Rune patches and lessons learned: [docs/NOTES.md](docs/NOTES.md).
 
 `vendor/rune` is Rune at rev `c369cc0` with a few patches (search for "cratus-rs"), and

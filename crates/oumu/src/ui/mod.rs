@@ -645,14 +645,47 @@ impl Front {
             rune::tray::TrayEvent::Activate { .. } => crate::commands::open_panel_inner(&self.app, "review", true),
             rune::tray::TrayEvent::Menu(id) => match id.as_str() {
                 "open" => crate::commands::open_panel_inner(&self.app, "review", true),
-                "quit" => {
-                    self.app.exit(0);
-                    tx.quit();
+                "quit" => self.quit(tx),
+                "update" => {
+                    if crate::update::found().is_some() {
+                        crate::update::install();
+                    } else {
+                        crate::update::check(true);
+                        crate::commands::open_panel_inner(&self.app, "settings", true);
+                    }
                 }
                 _ => {}
             },
             _ => {}
         }
+    }
+}
+
+/// The tray's menu: the update item names the version once one is found.
+fn tray_menu(update: Option<String>) -> Vec<rune::tray::TrayItem> {
+    use rune::tray::TrayItem;
+    vec![
+        TrayItem::action("open", "Open Oumu"),
+        TrayItem::action("update", match update {
+            Some(v) => format!("Update to {v}"),
+            None => "Check for updates".to_string(),
+        }),
+        TrayItem::Separator,
+        TrayItem::action("quit", "Quit Oumu"),
+    ]
+}
+
+impl Front {
+    pub fn refresh_tray(&self) {
+        if let Some(t) = &self.tray {
+            t.set_menu(tray_menu(crate::update::found()));
+        }
+    }
+
+    /// Leave (the tray's Quit, or an update's setup about to replace the exe).
+    pub fn quit(&mut self, tx: &mut Tx) {
+        self.app.exit(0);
+        tx.quit();
     }
 }
 
@@ -749,7 +782,7 @@ pub fn run(app: AppHandle, shared: Shared, dock_side: String, translate_on_start
     // the tray
     let me3 = me.clone();
     let tray = rune::tray::Tray::new(
-        rune::tray::TraySpec::new("oumu", "Oumu", rune::tray::TrayIcon::rgba(32, 32, icon_rgba(32))).tooltip("Oumu".to_string()).menu(vec![rune::tray::TrayItem::action("open", "Open Oumu"), rune::tray::TrayItem::Separator, rune::tray::TrayItem::action("quit", "Quit Oumu")]),
+        rune::tray::TraySpec::new("oumu", "Oumu", rune::tray::TrayIcon::rgba(32, 32, icon_rgba(32))).tooltip("Oumu".to_string()).menu(tray_menu(None)),
         move |e| me3.update(move |f, tx| f.tray_event(e, tx)),
     );
     match tray {
@@ -780,6 +813,10 @@ pub fn run(app: AppHandle, shared: Shared, dock_side: String, translate_on_start
         })
         .expect("tick thread");
 
+    if let Some((p, _)) = &front.panel {
+        crate::update::set_handles(me.clone(), p.clone());
+    }
+    crate::update::start_schedule(shared.clone());
     log::info!("Oumu (rune) ready");
     let mut front = Some(front);
     rapp.init(move || front.take().expect("one front")).run();
