@@ -124,9 +124,9 @@ function Test-App($name, $setup, $exeName, [bool]$hasShell) {
 function Test-OldVersions {
     # an older build's Apps entry under a test key name (never a real one)
     Write-Host "== old versions (test key CratusOldTest)"
-    $setup = Join-Path $rel "utsuri-setup.exe"
+    $setup = Join-Path $rel "oumu-setup.exe"
     $dir = Join-Path $sandbox "old-case"
-    $exe = Join-Path $dir "Utsuri.exe"
+    $exe = Join-Path $dir "Oumu.exe"
     $oldKey = Join-Path $uninst "CratusOldTest"
     $oldDir = Join-Path $sandbox "old"
     New-Item -ItemType Directory -Force $oldDir | Out-Null
@@ -159,11 +159,11 @@ function Test-OldVersions {
     Check "slow old uninstaller: setup waited for it (${secs}s, exit $code)" ($code -eq 0 -and $secs -ge 14)
     Check "old entry gone" (-not (Test-Path -LiteralPath $oldKey))
     Check "old uninstaller gone" (-not (Test-Path -LiteralPath $fake))
-    $p = Get-ItemProperty -LiteralPath (Join-Path $uninst "Utsuritest") -ErrorAction SilentlyContinue
-    Check "new Apps entry intact after the old uninstaller finished" ($p -and $p.UninstallString -like "`"$exe`" --uninstall*" -and $p.DisplayVersion -eq "2.0.0")
-    Check "new Run value intact" ((Get-ItemProperty -LiteralPath $run).$("Utsuri" + $suffix) -like "`"$exe`"*")
+    $p = Get-ItemProperty -LiteralPath (Join-Path $uninst "Oumutest") -ErrorAction SilentlyContinue
+    Check "new Apps entry intact after the old uninstaller finished" ($p -and $p.UninstallString -like "`"$exe`" --uninstall*" -and $p.DisplayVersion -eq "0.2.0")
+    Check "new Run value intact" ((Get-ItemProperty -LiteralPath $run).$("Oumu" + $suffix) -like "`"$exe`"*")
     Remove-Test
-    Check "cleaned up" (-not (Test-Path -LiteralPath $dir) -and -not (Test-Path -LiteralPath (Join-Path $uninst "Utsuritest")))
+    Check "cleaned up" (-not (Test-Path -LiteralPath $dir) -and -not (Test-Path -LiteralPath (Join-Path $uninst "Oumutest")))
     if (Test-Path -LiteralPath $oldKey) { Remove-Item -LiteralPath $oldKey -Recurse -Force }
     Remove-Item -LiteralPath $tmpCopy -Force -ErrorAction SilentlyContinue
 }
