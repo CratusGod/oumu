@@ -101,6 +101,13 @@ fn handle(app: &AppHandle, shared: &Shared, path: &str, args: Value) -> Result<V
             let shared2 = shared.clone();
             tauri::async_runtime::block_on(async move { crate::commands::run_feature_inner(&app2, &shared2, &name, fargs).await })
         }
+        "/chat" => {
+            // {"messages": [{"role","content"}…]}: one chat turn, as the panel sends it.
+            let app2 = app.clone();
+            let shared2 = shared.clone();
+            let msgs = args["messages"].clone();
+            tauri::async_runtime::block_on(async move { crate::commands::chat_send_inner(&app2, &shared2, "probe".into(), msgs).await }).map(|r| json!({"reply": r}))
+        }
         "/panel" => {
             // {"tucked": true|false} slides the panel; otherwise opens it on `view`.
             match args["tucked"].as_bool() {

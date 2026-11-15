@@ -267,6 +267,8 @@ mod tests {
         assert!(safe_selector("address:0x55ffc22c9b40"));
         assert!(safe_selector("pid:42"));
         assert!(!safe_selector("address:0x1\" }) hl.dsp.exec_cmd(\"rm"));
+        assert!(!panel_rule("Oumu\" }) hl.dsp.exec_cmd(\"rm", 0.0, 0.0, 1.0, 1.0));
+        assert_eq!(panel_rule_lua("Oumu", 12, 40, 440, 740), "eval hl.window_rule({ name = \"oumu-panel\", match = { class = \"^$\", title = \"^Oumu$\" }, float = true, pin = true, size = { \"440\", \"740\" }, move = { \"12\", \"40\" } })");
         assert!(!safe_selector(""));
     }
 
@@ -331,6 +333,22 @@ pub fn place_own(w: &OwnWindow, x: f64, y: f64, width: f64, height: f64) -> bool
     ok &= ok_reply(&format!("hl.dsp.window.resize({{ x = {width}, y = {height}, exact = true, window = \"{sel}\" }})"));
     ok &= ok_reply(&format!("hl.dsp.window.move({{ x = {x}, y = {y}, exact = true, window = \"{sel}\" }})"));
     ok
+}
+
+/// Register (or replace) a runtime rule so the panel window maps floating, pinned and at
+/// its rect. Placed by a rule, Hyprland's own open and close animations play where the
+/// panel is; placed after mapping, it first tiled (reflowing the other windows), then
+/// jumped. The rule lives until the config reloads; it is sent again before every show.
+pub fn panel_rule(title: &str, x: f64, y: f64, width: f64, height: f64) -> bool {
+    if !title.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
+        return false;
+    }
+    let (x, y, w, h) = (x.round() as i64, y.round() as i64, width.round().max(1.0) as i64, height.round().max(1.0) as i64);
+    ok(request(&panel_rule_lua(title, x, y, w, h)))
+}
+
+fn panel_rule_lua(title: &str, x: i64, y: i64, w: i64, h: i64) -> String {
+    format!("eval hl.window_rule({{ name = \"oumu-panel\", match = {{ class = \"^$\", title = \"^{title}$\" }}, float = true, pin = true, size = {{ \"{w}\", \"{h}\" }}, move = {{ \"{x}\", \"{y}\" }} }})")
 }
 
 fn ok_reply(lua: &str) -> bool {

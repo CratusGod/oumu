@@ -489,6 +489,11 @@ impl Front {
                     let size = ((st.w * k).round().max(1.0) as u32, (st.h * k).round().max(1.0) as u32);
                     win.set_position(pos);
                     win.resize((st.w as f32, st.h as f32));
+                    // Linux: the rule must be in place before the window maps
+                    #[cfg(target_os = "linux")]
+                    if st.visible && !crate::linux::hyprland::panel_rule("Oumu", st.x, st.y, st.w, st.h) {
+                        log::debug!("hyprland didn't take the panel rule");
+                    }
                     win.set_visible(st.visible);
                     self.panel_at = Some((pos, size));
                 }

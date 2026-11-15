@@ -412,6 +412,12 @@ pub async fn run_feature(app: AppHandle, state: State<'_, Shared>, name: String,
 }
 
 pub async fn chat_send(app: AppHandle, state: State<'_, Shared>, req_id: String, messages: Value) -> Result<String, String> {
+    chat_send_inner(&app, state.inner(), req_id, messages).await
+}
+
+/// The chat turn: streams the reply to the panel and returns it whole (the debug probe's
+/// `/chat` uses the return value).
+pub async fn chat_send_inner(app: &AppHandle, state: &Shared, req_id: String, messages: Value) -> Result<String, String> {
     let (cfg, system) = {
         let st = state.lock().unwrap();
         let (doc_text, app_name, sel) = st.doc.as_ref().map(|d| (d.text.clone(), d.app_name.clone(), d.selected_text.clone())).unwrap_or_default();

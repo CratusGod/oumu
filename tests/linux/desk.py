@@ -45,7 +45,9 @@ def ydotool(*args: str) -> None:
 
 
 def ensure_ydotoold() -> None:
-    if (RUN / ".ydotool_socket").exists():
+    # the socket file outlives a stopped service, so ask systemd, not the file
+    active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "ydotool.service"]).returncode == 0
+    if active and (RUN / ".ydotool_socket").exists():
         return
     subprocess.run(["systemctl", "--user", "start", "ydotool.service"], check=True)
     for _ in range(50):
