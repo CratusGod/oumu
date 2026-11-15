@@ -2,3 +2,4 @@
 /spikes/*/target
 /spikes/*/vendor
 /spikes
+__pycache__/
