@@ -61,8 +61,12 @@ Write-Host "       sha256 $sha"
 
 if ($Publish) {
     $tag = "v$version"
-    gh release view $tag -R $repo *> $null
-    if ($LASTEXITCODE -eq 0) { throw "release $tag already exists: bump the version first" }
+    # PowerShell 5.1 turns a native command's stderr ("release not found") into an error
+    $ErrorActionPreference = "Continue"
+    gh release view $tag -R $repo 2>&1 | Out-Null
+    $exists = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = "Stop"
+    if ($exists) { throw "release $tag already exists: bump the version first" }
     if (-not $Notes) { $Notes = "$Title $version for Windows. Install with $Title-Setup.exe (no admin rights needed); an installed $Title $version or newer updates itself from here." }
     gh release create $tag -R $repo --title "$Title $version" --notes $Notes --latest $asset (Join-Path $dist "$Title-Setup.exe.sha256")
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
