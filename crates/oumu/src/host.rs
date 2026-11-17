@@ -117,6 +117,10 @@ pub struct Status {
     pub skip_built_in: bool,
     pub has_doc: bool,
     pub linting: bool,
+    /// The app in front shares no text (Linux: Electron started without
+    /// `--force-renderer-accessibility`); the panel says how to fix that.
+    #[serde(default)]
+    pub hides_text: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -497,6 +501,11 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
         }
     }
 
+    // Nothing editable in front: is that because the app hides its text? (D-Bus, outside the
+    // lock.) While Oumu itself is in front (its panel), the last answer stands, as the
+    // document does.
+    let hides_text = (!ours).then(|| focused.is_none() && trusted && !paused && !skipped && !fullscreen && ax::front_hides_text(front_pid));
+
     let mut doc_event: Option<HostDoc> = None;
     let mut alerts_event: Option<Vec<Alert>> = None;
     let mut sel_event: Option<(usize, usize, String)> = None;
@@ -511,6 +520,9 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
         st.status.frontmost_bid = front_bid.clone();
         st.status.skipped = skipped;
         st.status.skip_built_in = built_in;
+        if let Some(h) = hides_text {
+            st.status.hides_text = h;
+        }
         // The app the document lives in was just added to the skip list: let it go.
         if st.doc.as_ref().map(|d| skipped_app(&d.bundle_id, &st.settings)).unwrap_or(false) {
             st.doc = None;
@@ -808,7 +820,7 @@ fn tick(app: &AppHandle, shared: &Shared, system: &AXElement, engine: &mut Engin
 
     // 5. Status (only when changed).
     let status = shared.lock().unwrap().status.clone();
-    let ssig = format!("{}|{}|{}|{}|{}", status.trusted, status.frontmost, status.has_doc, status.skipped, status.frontmost_bid);
+    let ssig = format!("{}|{}|{}|{}|{}|{}", status.trusted, status.frontmost, status.has_doc, status.skipped, status.frontmost_bid, status.hides_text);
     if ssig != *last_status_sig {
         *last_status_sig = ssig;
         let _ = app.emit("host://status", &status);

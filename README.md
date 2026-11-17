@@ -46,6 +46,10 @@ Or build the installer from source:
 Linux notes: the panel is placed through Hyprland's IPC, so other Wayland desktops are
 untested.
 
+Electron apps (Vesktop, Discord, Slack...) share their text with Oumu only when started with
+`--force-renderer-accessibility`; Oumu's panel says so when one is in front. For Vesktop, add
+that line to `~/.config/vesktop-flags.conf` and restart it.
+
 ## Privacy
 
 - No accounts or telemetry. Besides the AI and search features you use, the only network use

@@ -75,6 +75,7 @@ pub struct Status {
     pub skip_built_in: bool,
     pub has_doc: bool,
     pub linting: bool,
+    pub hides_text: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -174,7 +175,7 @@ impl Model {
             }
             "host://status" => {
                 self.status = serde_json::from_value(p.clone()).unwrap_or_default();
-                log::info!("status: front={} doc={} skipped={} linting={}", self.status.frontmost, self.status.has_doc, self.status.skipped, self.status.linting);
+                log::info!("status: front={} doc={} skipped={} linting={} hides_text={}", self.status.frontmost, self.status.has_doc, self.status.skipped, self.status.linting, self.status.hides_text);
             }
             "host://geometry" => {
                 let g: Geometry = serde_json::from_value(p.clone()).unwrap_or_default();

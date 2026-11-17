@@ -326,6 +326,40 @@ pub fn prompt_trust() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Apps that hide their text (Electron without renderer accessibility).
+
+const NULL_PATH: &str = "/org/a11y/atspi/null";
+/// How long one app's answer is kept: the check walks the bus, the host asks every tick.
+const HIDES_TEXT_CACHE: Duration = Duration::from_secs(5);
+
+/// A Chromium-toolkit app whose windows (`tops`, each with its children's paths) hold
+/// nothing but AT-SPI's null object.
+fn hollow(toolkit: &str, tops: &[Vec<String>]) -> bool {
+    toolkit.eq_ignore_ascii_case("chromium") && !tops.is_empty() && tops.iter().all(|kids| kids.iter().all(|k| k == NULL_PATH))
+}
+
+/// The app in front (`pid`) is an Electron/Chromium app that shares no text: Oumu can't
+/// read it until it is started with `--force-renderer-accessibility`.
+pub fn front_hides_text(pid: i32) -> bool {
+    static LAST: Mutex<Option<(i32, Instant, bool)>> = Mutex::new(None);
+    if pid <= 0 || !is_trusted() {
+        return false;
+    }
+    if let Ok(g) = LAST.lock() {
+        if let Some((p, t, v)) = *g {
+            if p == pid && t.elapsed() < HIDES_TEXT_CACHE {
+                return v;
+            }
+        }
+    }
+    let v = focus::app_hides_text(pid).unwrap_or(false);
+    if let Ok(mut g) = LAST.lock() {
+        *g = Some((pid, Instant::now(), v));
+    }
+    v
+}
+
+// ---------------------------------------------------------------------------
 // Focus tracking: apps announce focus with `object:state-changed:focused`.
 
 pub(super) mod focus {
@@ -394,6 +428,21 @@ pub(super) mod focus {
 
     fn children(bus: &str, path: &str) -> Vec<(String, OwnedObjectPath)> {
         call(bus, path, IFACE_ACCESSIBLE, "GetChildren", &()).unwrap_or_default()
+    }
+
+    /// Whether app `pid` is a Chromium/Electron app exporting no page content: its windows
+    /// hold only AT-SPI's null object. Electron on Linux builds the page's accessibility
+    /// tree only when started with `--force-renderer-accessibility` (Vesktop, Steam's web
+    /// helper), so Oumu has nothing to read there. `None` when the app isn't on the bus.
+    pub(super) fn app_hides_text(pid: i32) -> Option<bool> {
+        let apps = children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root");
+        let (bus, root) = apps.into_iter().find(|(b, _)| bus_pid(b) == Some(pid))?;
+        let toolkit: String = prop(&bus, root.as_str(), "org.a11y.atspi.Application", "ToolkitName").unwrap_or_default();
+        let tops: Vec<Vec<String>> = children(&bus, root.as_str())
+            .iter()
+            .map(|(b, p)| children(b, p.as_str()).into_iter().map(|(_, c)| c.to_string()).collect())
+            .collect();
+        Some(super::hollow(&toolkit, &tops))
     }
 
     fn states(bus: &str, path: &str) -> u64 {
@@ -864,9 +913,18 @@ impl AXElement {
         }
         let Some(frame) = self.extents_window() else { return COORD_WINDOW };
         let caret = self.ids().and_then(|(b, p)| prop::<i32>(b, p, IFACE_TEXT, "CaretOffset")).unwrap_or(0).max(0);
-        let fits = |coord: u32| {
-            self.extents(self.call(IFACE_TEXT, "GetCharacterExtents", &(caret, coord)))
-                .map(|r| frame_holds(&frame, &r))
+        // Probe the caret's character, the one before it (a caret at the very end has no
+        // box in Chromium) and the first one. A coordinate type must hold every probed box:
+        // one probe alone fooled it, as Chromium's WINDOW boxes sit 27 px high in an Electron
+        // text area and a second-line box still landed inside the field.
+        let probes: Vec<i32> = [caret, caret - 1, 0]
+            .into_iter()
+            .filter(|&c| c >= 0)
+            .filter(|&c| self.extents(self.call(IFACE_TEXT, "GetCharacterExtents", &(c, COORD_SCREEN))).is_some())
+            .collect();
+        let fits = |coord: u32| -> Option<bool> {
+            let boxes: Vec<Rect> = probes.iter().filter_map(|&c| self.extents(self.call(IFACE_TEXT, "GetCharacterExtents", &(c, coord)))).collect();
+            (!boxes.is_empty()).then(|| boxes.iter().all(|r| frame_holds(&frame, r)))
         };
         let pick = match (fits(COORD_WINDOW), fits(COORD_SCREEN)) {
             (Some(true), _) => COORD_WINDOW,
@@ -1086,6 +1144,28 @@ pub fn primary_screen_height() -> Option<f64> {
 /// Move the pointer (debug probe only: lets the e2e harness hover an underline).
 pub fn post_mouse_move(x: f64, y: f64) -> bool {
     desktop::move_pointer(x, y)
+}
+
+#[cfg(test)]
+mod hollow_tests {
+    use super::*;
+
+    #[test]
+    fn electron_without_renderer_accessibility_is_hollow() {
+        // Vesktop as measured: one frame whose only child is the null object
+        assert!(hollow("Chromium", &[vec![NULL_PATH.to_string()]]));
+        // Steam's web helper: many frames, each with only the null object
+        assert!(hollow("Chromium", &vec![vec![NULL_PATH.to_string()]; 13]));
+    }
+
+    #[test]
+    fn apps_with_page_content_or_other_toolkits_are_not_hollow() {
+        assert!(!hollow("Chromium", &[vec!["/org/a11y/atspi/accessible/5".to_string()]]));
+        assert!(!hollow("Chromium", &[vec![NULL_PATH.to_string()], vec!["/org/a11y/atspi/accessible/9".to_string()]]));
+        assert!(!hollow("Gecko", &[vec![NULL_PATH.to_string()]]));
+        assert!(!hollow("Qt", &[vec![], vec![]]));
+        assert!(!hollow("Chromium", &[]));
+    }
 }
 
 #[cfg(test)]

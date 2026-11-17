@@ -460,6 +460,9 @@ fn no_doc(s: &S, m: &Model) -> El {
         }
         return scroll(e);
     }
+    if stt.hides_text {
+        return hides_text(s, m);
+    }
     let front = if stt.frontmost.is_empty() { String::new() } else { format!(" (now in front: {})", stt.frontmost) };
     scroll(empty("pencil", "Click into a text field", &format!("Open any app and click where you write. Oumu follows your cursor{front}."), k))
 }
@@ -476,8 +479,22 @@ fn alert_mode(a: &Alert) -> &'static str {
     }
 }
 
+/// The app in front shares no text (Electron without renderer accessibility): say how to fix it.
+fn hides_text(s: &S, m: &Model) -> El {
+    let k = &s.tok;
+    let app = if m.status.frontmost.is_empty() { "This app".to_string() } else { m.status.frontmost.clone() };
+    let body = format!(
+        "{app} is an Electron app, and it doesn't share its text with other apps unless it is started with --force-renderer-accessibility. \
+         Add that flag to how it starts (Vesktop: one line in ~/.config/vesktop-flags.conf), then restart {app}."
+    );
+    scroll(empty("pencil", &format!("Oumu can't read {app}"), &body, k))
+}
+
 fn review(s: &S, m: &Model) -> El {
     let k = &s.tok;
+    if m.status.hides_text {
+        return hides_text(s, m);
+    }
     let Some(doc) = &m.doc else { return no_doc(s, m) };
     let running = m.spot_running || s.feat("spot").loading;
     let spot = btn("spot", Btn::Outline, "", k).px(12.0).py(7.0).help("Check every sentence for wordiness, tangles, long run-ons and repeats");

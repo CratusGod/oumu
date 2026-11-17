@@ -767,6 +767,11 @@ fn exe_name(pid: i32) -> Option<String> {
 }
 
 /// (pid, "bundle id" = lower-case exe name, display name = window title's app part).
+/// Linux only (Electron without renderer accessibility); Windows apps always share text through UIA.
+pub fn front_hides_text(_pid: i32) -> bool {
+    false
+}
+
 pub fn frontmost_app() -> Option<(i32, String, String)> {
     let hwnd = front_window();
     if hwnd.0.is_null() {
