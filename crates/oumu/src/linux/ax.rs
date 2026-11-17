@@ -28,6 +28,12 @@ const IFACE_ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const IFACE_TEXT: &str = "org.a11y.atspi.Text";
 const IFACE_EDITABLE: &str = "org.a11y.atspi.EditableText";
 const IFACE_COMPONENT: &str = "org.a11y.atspi.Component";
+const IFACE_HYPERTEXT: &str = "org.a11y.atspi.Hypertext";
+const IFACE_HYPERLINK: &str = "org.a11y.atspi.Hyperlink";
+/// The character a hypertext object puts where a child object sits (AT-SPI's "embedded object").
+const EMBED: char = '\u{FFFC}';
+/// How deep `through_embeds` follows blocks inside blocks.
+const EMBED_DEPTH: usize = 4;
 
 const ROLE_FRAME: u32 = 23;
 const ROLE_DIALOG: u32 = 16;
@@ -325,6 +331,19 @@ pub fn prompt_trust() -> bool {
     on
 }
 
+/// In a field's own text: the character offset of the embedded object to follow, when the
+/// text is nothing but embedded objects and whitespace (an inline link inside real text is
+/// not followed). The one at or before the caret wins, else the first.
+fn embed_at(text: &str, caret: i32) -> Option<usize> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.iter().any(|c| *c != EMBED && !c.is_whitespace()) {
+        return None;
+    }
+    let embeds: Vec<usize> = chars.iter().enumerate().filter(|(_, c)| **c == EMBED).map(|(i, _)| i).collect();
+    let first = *embeds.first()?;
+    Some(embeds.iter().rev().copied().find(|&i| caret >= 0 && i as i32 <= caret).unwrap_or(first))
+}
+
 // ---------------------------------------------------------------------------
 // Apps that hide their text (Electron without renderer accessibility).
 
@@ -531,16 +550,19 @@ pub struct AXElement {
     pid: i32,
     /// Last full text read, for UTF-16 <-> character conversion between reads.
     text: std::sync::Arc<Mutex<String>>,
+    /// A line block of a rich editor, reached from its focused box (`through_embeds`): a
+    /// text area, whatever role the toolkit gives the block.
+    editor_block: bool,
 }
 
 impl AXElement {
     fn node(bus: String, path: String, pid: i32) -> AXElement {
-        AXElement { kind: Kind::Node { bus, path }, pid, text: Default::default() }
+        AXElement { kind: Kind::Node { bus, path }, pid, text: Default::default(), editor_block: false }
     }
 
     pub fn system_wide() -> AXElement {
         focus::start();
-        AXElement { kind: Kind::System, pid: 0, text: Default::default() }
+        AXElement { kind: Kind::System, pid: 0, text: Default::default(), editor_block: false }
     }
 
     pub fn set_timeout(&self, _secs: f32) {}
@@ -622,7 +644,7 @@ impl AXElement {
             .map(|(bus, path)| AXElement::node(bus, path, front.pid))
             .and_then(|el| el.usable_focus().map(|editable| (el, editable)));
         let live = match live {
-            Some((el, true)) => return Some(el),
+            Some((el, true)) => return Some(el.through_embeds()),
             other => other.map(|(el, _)| el),
         };
         // No event for an editable field of the front app: it took focus before
@@ -633,9 +655,9 @@ impl AXElement {
                 if let Ok(mut g) = focus::CURRENT.lock() {
                     *g = Some((bus.clone(), path.clone()));
                 }
-                Some(AXElement::node(bus, path, front.pid)).filter(|el| el.usable_focus().is_some())
+                Some(AXElement::node(bus, path, front.pid)).filter(|el| el.usable_focus().is_some()).map(AXElement::through_embeds)
             }
-            None => live,
+            None => live.map(AXElement::through_embeds),
         }
     }
 
@@ -645,6 +667,32 @@ impl AXElement {
         (Self::has_state(st, STATE_FOCUSED) && !Self::has_state(st, STATE_DEFUNCT)).then(|| Self::has_state(st, STATE_EDITABLE))
     }
 
+    /// A rich editor (Discord's Slate, any contenteditable in Chromium or Firefox) keeps
+    /// each line in a child block: the focused box's own text is just embedded-object
+    /// characters (and newlines). Follow the one at the caret down to the block holding the
+    /// text, which is what Oumu reads, underlines and edits. Anything else stays as it is.
+    fn through_embeds(self) -> AXElement {
+        let mut el = self;
+        for _ in 0..EMBED_DEPTH {
+            // the cheap question first (this runs every tick): no child objects, nothing to follow
+            if el.call::<_, i32>(IFACE_HYPERTEXT, "GetNLinks", &()).is_none_or(|n| n <= 0) {
+                break;
+            }
+            let Some(text) = el.call::<_, String>(IFACE_TEXT, "GetText", &(0i32, -1i32)) else { break };
+            let caret = el.ids().and_then(|(b, p)| prop::<i32>(b, p, IFACE_TEXT, "CaretOffset")).unwrap_or(-1);
+            let Some(pos) = embed_at(&text, caret) else { break };
+            let Some(link) = el.call::<_, i32>(IFACE_HYPERTEXT, "GetLinkIndex", &(pos as i32)).filter(|&l| l >= 0) else { break };
+            let Some((lb, lp)) = el.call::<_, (String, OwnedObjectPath)>(IFACE_HYPERTEXT, "GetLink", &(link,)) else { break };
+            let Some((cb, cp)) = call::<_, (String, OwnedObjectPath)>(&lb, lp.as_str(), IFACE_HYPERLINK, "GetObject", &(0i32,)) else { break };
+            if cp.as_str() == NULL_PATH {
+                break;
+            }
+            log::debug!("a11y: field text is in a child block ({})", cp.as_str());
+            el = AXElement { editor_block: true, ..AXElement::node(cb, cp.to_string(), el.pid) };
+        }
+        el
+    }
+
     pub fn parent(&self) -> Option<AXElement> {
         self.parent_node()
     }
@@ -652,12 +700,15 @@ impl AXElement {
     /// The window that holds this element, placed by Hyprland.
     pub fn window(&self) -> Option<AXElement> {
         let w = window_for_pid(self.pid)?;
-        Some(AXElement { kind: Kind::Window(w), pid: self.pid, text: Default::default() })
+        Some(AXElement { kind: Kind::Window(w), pid: self.pid, text: Default::default(), editor_block: false })
     }
 
     /// The macOS role names `host.rs` reasons about.
     pub fn role(&self) -> Option<String> {
         let role = self.role_id()?;
+        if self.editor_block {
+            return Some("AXTextArea".into());
+        }
         let st = self.states();
         Some(
             match role {
@@ -1149,6 +1200,25 @@ pub fn post_mouse_move(x: f64, y: f64) -> bool {
 #[cfg(test)]
 mod hollow_tests {
     use super::*;
+
+    #[test]
+    fn a_rich_editor_is_followed_to_the_block_at_the_caret() {
+        // the Discord-like box as measured in Electron: "\n\u{FFFC}\n", caret at the end
+        assert_eq!(embed_at("\n\u{FFFC}\n", 3), Some(1));
+        // two lines: the caret in the first block's span picks it, at the end the last
+        assert_eq!(embed_at("\u{FFFC}\u{FFFC}", 0), Some(0));
+        assert_eq!(embed_at("\u{FFFC}\u{FFFC}", 2), Some(1));
+        // no caret: the first block
+        assert_eq!(embed_at("\u{FFFC}\u{FFFC}", -1), Some(0));
+    }
+
+    #[test]
+    fn plain_text_and_inline_links_are_not_followed() {
+        assert_eq!(embed_at("Their is a mistake", 3), None);
+        assert_eq!(embed_at("see \u{FFFC} here", 5), None);
+        assert_eq!(embed_at("", 0), None);
+        assert_eq!(embed_at("\n\n", 1), None);
+    }
 
     #[test]
     fn electron_without_renderer_accessibility_is_hollow() {
